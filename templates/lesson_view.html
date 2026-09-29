@@ -1,126 +1,264 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{{ lesson.title }} - {{ course.name }}</title>
     <style>
-        body { 
-            font-family: Arial, sans-serif; 
-            margin: 20px; 
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
             background: #1a1a1a;
             color: #e0e0e0;
-        }
-        .container { 
-            max-width: 1000px; 
-            margin: 0 auto; 
-            background: #2d2d2d;
+            line-height: 1.6;
             padding: 20px;
-            border-radius: 8px;
         }
-        video, audio { 
-            width: 100%; 
-            max-width: 800px; 
-            border-radius: 5px;
-            display: block;
+
+        .container {
+            max-width: 1000px;
             margin: 0 auto;
+            background: #2d2d2d;
+            border-radius: 8px;
+            padding: 20px;
         }
-        .content { 
-            margin: 20px 0; 
-        }
-        .navigation { 
-            margin: 20px 0; 
-            display: flex;
-            gap: 10px;
-            flex-wrap: wrap;
-            align-items: center;
-        }
-        button { 
-            padding: 10px 20px; 
-            margin: 5px; 
-            cursor: pointer; 
-            background: #007acc;
-            color: white;
-            border: none;
-            border-radius: 5px;
-            transition: background 0.3s;
-        }
-        button:hover {
-            background: #005a9e;
-        }
-        button:disabled {
-            background: #666;
-            cursor: not-allowed;
-        }
-        .file-link { 
-            display: block; 
-            margin: 5px 0; 
-            padding: 10px; 
-            background: #3d3d3d; 
-            text-decoration: none; 
-            color: #e0e0e0; 
-            border-radius: 5px;
-            transition: background 0.3s;
-        }
-        .file-link:hover { 
-            background: #404040; 
-        }
-        .lesson-path {
-            background: #333;
-            padding: 10px;
-            border-radius: 5px;
-            margin-bottom: 20px;
-            font-family: monospace;
-            color: #999;
-        }
+
         .lesson-title {
             color: #007acc;
+            margin-bottom: 15px;
+        }
+
+        .lesson-path {
+            background: #333;
+            border-radius: 5px;
+            padding: 10px;
+            margin-bottom: 20px;
+            font-family: 'Courier New', monospace;
+            font-size: 0.9em;
+            color: #9cdcfe;
+            overflow-wrap: anywhere;
+        }
+
+        .navigation {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+            flex-wrap: wrap;
             margin-bottom: 20px;
         }
+
+        .navigation a {
+            color: #007acc;
+            text-decoration: none;
+        }
+
+        .navigation a:hover {
+            text-decoration: underline;
+        }
+
+        button {
+            background: #007acc;
+            color: #fff;
+            border: none;
+            border-radius: 5px;
+            padding: 10px 20px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: background 0.3s;
+        }
+
+        button:hover:not(:disabled) {
+            background: #005a9e;
+        }
+
+        button:disabled {
+            background: #28a745;
+            cursor: default;
+        }
+
+        button.btn-secondary {
+            background: #555;
+        }
+
+        button.btn-secondary:hover:not(:disabled) {
+            background: #666;
+        }
+
+        .storage-warning {
+            background: #5a2d2d;
+            border-left: 4px solid #ff6b6b;
+            border-radius: 5px;
+            padding: 10px 15px;
+            margin-bottom: 20px;
+            font-size: 0.9em;
+        }
+
+        video, audio {
+            display: block;
+            width: 100%;
+            max-width: 800px;
+            margin: 0 auto;
+            border-radius: 5px;
+        }
+
+        .resource {
+            margin: 20px 0;
+        }
+
+        .resource h4 {
+            margin-bottom: 10px;
+            color: #9cdcfe;
+            font-weight: 500;
+        }
+
+        .resource-frame {
+            width: 100%;
+            height: 600px;
+            border: none;
+            border-radius: 5px;
+            background: #fff;
+        }
+
         .text-content {
             background: #3d3d3d;
+            border-radius: 5px;
             padding: 20px;
-            border-radius: 5px;
-            margin: 20px 0;
             max-height: 600px;
-            overflow-y: auto;
+            overflow: auto;
             white-space: pre-wrap;
+            overflow-wrap: anywhere;
             font-family: 'Courier New', monospace;
-            line-height: 1.6;
+            font-size: 0.95em;
         }
-        .text-content iframe {
-            background: white;
+
+        .file-link {
+            display: block;
+            margin-top: 10px;
+            padding: 10px;
+            background: #3d3d3d;
             border-radius: 5px;
+            color: #e0e0e0;
+            text-decoration: none;
+            transition: background 0.3s;
         }
+
+        .file-link:hover {
+            background: #404040;
+        }
+
         .nav-buttons {
             display: flex;
             gap: 10px;
-            margin-top: 20px;
+            margin-top: 30px;
         }
+
         .nav-buttons a {
             text-decoration: none;
-            color: inherit;
+        }
+
+        .player-toolbar {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+            flex-wrap: wrap;
+            background: #262626;
+            border: 1px solid #3d3d3d;
+            border-radius: 5px;
+            padding: 10px 15px;
+            margin-bottom: 20px;
+        }
+
+        .player-toolbar select {
+            background: #3d3d3d;
+            color: #e0e0e0;
+            border: 1px solid #666;
+            border-radius: 5px;
+            padding: 6px 10px;
+            font-size: 14px;
+            cursor: pointer;
+        }
+
+        .player-toolbar select:focus {
+            outline: none;
+            border-color: #007acc;
+        }
+
+        .toolbar-check {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            cursor: pointer;
+            user-select: none;
+        }
+
+        .toolbar-check input {
+            width: 16px;
+            height: 16px;
+            cursor: pointer;
+        }
+
+        .hint {
+            color: #999;
+            font-size: 0.9em;
         }
     </style>
 </head>
 <body>
     <div class="container">
         <h1 class="lesson-title">{{ lesson.title }}</h1>
-        
-        <div class="lesson-path">
-            <strong>Path:</strong> {{ lesson_path }}
-        </div>
-        
+
+        <div class="lesson-path">{{ lesson_path }}</div>
+
         <div class="navigation">
-            <a href="/" style="text-decoration: none; color: #007acc;">← Back to Course</a>
-            <button onclick="markCompleted()">Mark as Completed</button>
+            <a href="/">← Back to Course</a>
+            <button type="button" id="mark-completed" onclick="markCompleted()"
+                    {% if lesson.completed %}disabled{% endif %}>
+                {% if lesson.completed %}Completed ✓{% else %}Mark as Completed{% endif %}
+            </button>
+            <span class="hint">Shortcuts: space play/pause, ← → 10 s, ↑ ↓ volume</span>
         </div>
+
+        {% if storage_warning %}
+        <div class="storage-warning">
+            <strong>Progress could not be saved.</strong> {{ storage_warning }}
+        </div>
+        {% endif %}
+
+        {% if lesson.video_file or lesson.audio_file %}
+        <div class="player-toolbar">
+            <label for="playback-rate">Speed</label>
+            <select id="playback-rate" title="Playback speed">
+                <option value="0.5">0.5×</option>
+                <option value="0.75">0.75×</option>
+                <option value="1" selected>1×</option>
+                <option value="1.25">1.25×</option>
+                <option value="1.5">1.5×</option>
+                <option value="1.75">1.75×</option>
+                <option value="2">2×</option>
+            </select>
+            <label class="toolbar-check" for="autoplay-next">
+                <input type="checkbox" id="autoplay-next">
+                Autoplay next lesson
+            </label>
+            {% if autoplay_title %}
+            <span class="hint">Up next: <strong>{{ autoplay_title }}</strong></span>
+            {% else %}
+            <span class="hint">This is the last lesson of the course</span>
+            {% endif %}
+        </div>
+        {% endif %}
 
         <div class="content">
             {% if lesson.video_file %}
             <h3>Video</h3>
-            <video controls preload="metadata" id="video-player">
-                <source src="/files/{{ lesson.video_file }}" type="video/mp4">
+            <video controls preload="{% if autoplay %}auto{% else %}metadata{% endif %}" id="video-player" playsinline>
+                <source src="{{ lesson.video_src }}" type="{{ lesson.video_mime }}">
                 {% if lesson.subtitle_file %}
-                <track kind="subtitles" src="/files/{{ lesson.subtitle_file }}" srclang="en" label="English">
+                <track kind="subtitles" src="{{ lesson.subtitle_src }}" srclang="en" label="Subtitles" default>
                 {% endif %}
                 Your browser does not support the video tag.
             </video>
@@ -128,22 +266,32 @@
 
             {% if lesson.audio_file %}
             <h3>Audio</h3>
-            <audio controls preload="metadata" id="audio-player">
-                <source src="/files/{{ lesson.audio_file }}" type="audio/mp3">
+            <audio controls preload="{% if autoplay %}auto{% else %}metadata{% endif %}" id="audio-player">
+                <source src="{{ lesson.audio_src }}" type="{{ lesson.audio_mime }}">
+                {% if lesson.subtitle_file %}
+                <track kind="subtitles" src="{{ lesson.subtitle_src }}" srclang="en" label="Subtitles" default>
+                {% endif %}
                 Your browser does not support the audio tag.
             </audio>
             {% endif %}
 
-            {% if lesson.text_files %}
+            {% if text_resources %}
             <h3>Content</h3>
-            {% for text_file in lesson.text_files %}
-            <div style="margin-bottom: 20px;">
-                <h4>{{ text_file.split('/')[-1] }}</h4>
-                <div class="text-content" id="content-{{ loop.index0 }}">
-                    <div style="text-align: center; color: #666;">Loading content...</div>
-                </div>
-                <a href="/files/{{ text_file|replace('\\', '/') }}" class="file-link" target="_blank">
-                    📄 Open {{ text_file.split('/')[-1] }} in new tab
+            {% for resource in text_resources %}
+            <div class="resource">
+                <h4>{{ resource.name }}</h4>
+                {% if resource.mode == 'iframe' %}
+                <iframe class="resource-frame" src="{{ resource.src }}" title="{{ resource.name }}"></iframe>
+                {% elif resource.mode == 'text' %}
+                <pre class="text-content" data-text-src="{{ resource.src }}">Loading…</pre>
+                {% else %}
+                <p class="hint">
+                    This file type cannot be previewed in the browser. Use the link below to open it
+                    with the matching desktop application.
+                </p>
+                {% endif %}
+                <a class="file-link" href="{{ resource.src }}" target="_blank" rel="noopener">
+                    📄 Open {{ resource.name }} in a new tab
                 </a>
             </div>
             {% endfor %}
@@ -152,214 +300,290 @@
 
         <div class="nav-buttons">
             {% if prev_lesson %}
-            <a href="/lesson/{{ prev_lesson }}">
-                <button>← Previous</button>
-            </a>
+            <a href="/lesson/{{ prev_lesson }}"><button type="button" class="btn-secondary">← Previous</button></a>
             {% else %}
-            <button disabled>← Previous</button>
+            <button type="button" disabled>← Previous</button>
             {% endif %}
 
             {% if next_lesson %}
-            <a href="/lesson/{{ next_lesson }}">
-                <button>Next →</button>
-            </a>
+            <a href="/lesson/{{ next_lesson }}"><button type="button">Next →</button></a>
             {% else %}
-            <button disabled>Next →</button>
+            <button type="button" disabled>Next →</button>
             {% endif %}
         </div>
 
         <script>
-            // Load text content
-            {% for text_file in lesson.text_files %}
-            console.log('Loading file: {{ text_file }}');
-            const filePath = '{{ text_file|replace("\\", "/") }}';
-            console.log('Encoded file path:', filePath);
-            
-            // Check if this is an HTML file
-            const isHtmlFile = filePath.toLowerCase().endsWith('.html');
-            const contentDiv = document.getElementById('content-{{ loop.index0 }}');
-            
-            if (isHtmlFile) {
-                // For HTML files, create an iframe
-                console.log('Creating iframe for HTML file');
-                contentDiv.innerHTML = `
-                    <iframe 
-                        src="/files/${encodeURIComponent(filePath)}" 
-                        style="width: 100%; height: 600px; border: none; border-radius: 5px;"
-                        title="${filePath.split('/').pop()}"
-                    ></iframe>
-                `;
-            } else {
-                // For text files, fetch and display content
-                fetch('/files/' + encodeURIComponent(filePath))
-                    .then(response => {
-                        console.log('Response status:', response.status);
-                        if (!response.ok) {
-                            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-                        }
-                        return response.text();
-                    })
-                    .then(content => {
-                        console.log('Content loaded successfully, length:', content.length);
-                        if (contentDiv) {
-                            // Check if it's HTML content
-                            if (content.trim().startsWith('<') && content.includes('</')) {
-                                contentDiv.innerHTML = content;
-                            } else {
-                                // Treat as plain text
-                                contentDiv.textContent = content;
-                            }
-                        }
-                    })
-                    .catch(error => {
-                        console.error('Error loading content:', error);
-                        if (contentDiv) {
-                            contentDiv.innerHTML = 
-                                '<div style="color: #ff6b6b;">Error loading content: ' + error.message + '</div>' +
-                                '<div style="color: #999; font-size: 0.9em; margin-top: 10px;">File path: ' + filePath + '</div>';
-                        }
-                    });
-            }
-            {% endfor %}
+            const lessonPath = {{ lesson_path|tojson }};
+            const initialCompleted = {{ 'true' if lesson.completed else 'false' }};
+            const savedProgress = {{ lesson.progress_seconds|default(0)|int }};
+            const autoplayHref = {{ autoplay_href|tojson }};
+            const autoplayTitle = {{ autoplay_title|tojson }};
+            const autoplayRequested = {{ autoplay|tojson }};
 
-            // Media progress tracking
+            // Preferences that have to survive page changes (playback speed, autoplay)
+            const RATE_KEY = 'offlineu.playbackRate';
+            const AUTOPLAY_KEY = 'offlineu.autoplayNext';
+
+            function readPreference(key, fallback) {
+                try {
+                    const value = window.localStorage.getItem(key);
+                    return value === null ? fallback : value;
+                } catch (error) {
+                    return fallback;
+                }
+            }
+
+            function writePreference(key, value) {
+                try {
+                    window.localStorage.setItem(key, value);
+                } catch (error) {
+                    // storage disabled (private mode): everything still works, just without memory
+                }
+            }
+
             const video = document.getElementById('video-player');
             const audio = document.getElementById('audio-player');
             const activeMedia = video || audio;
-            let isCompleted = false;
+            const markButton = document.getElementById('mark-completed');
+            const rateSelect = document.getElementById('playback-rate');
+            const autoplayToggle = document.getElementById('autoplay-next');
+            let completed = initialCompleted;
+            let saveWarningShown = false;
+            let autoplayEnabled = readPreference(AUTOPLAY_KEY, '1') !== '0';
 
-            if (activeMedia) {
-                let lastSaveTime = 0;
-
-                activeMedia.addEventListener('timeupdate', function() {
-                    const currentTime = activeMedia.currentTime;
-
-                    // Save progress every 15 seconds
-                    if (currentTime - lastSaveTime > 15) {
-                        saveProgress(currentTime);
-                        lastSaveTime = currentTime;
-                    }
-                });
-
-                activeMedia.addEventListener('ended', function() {
-                    saveProgress(activeMedia.currentTime, true);
-                    markAsCompleted();
-                });
-
-                // Resume from saved position
-                const savedProgress = {{ lesson.progress_seconds|default(0) }};
-                if (savedProgress > 0 && savedProgress < activeMedia.duration - 30) {
-                    activeMedia.currentTime = savedProgress;
-                    showNotification(`Resumed from ${Math.floor(savedProgress / 60)}:${String(Math.floor(savedProgress % 60)).padStart(2, '0')}`);
-                }
+            if (autoplayToggle) {
+                autoplayToggle.checked = autoplayEnabled;
             }
 
-            function saveProgress(progressSeconds, completed = false) {
-                fetch('/api/progress', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({
-                        lesson_path: '{{ lesson_path }}',
-                        completed: completed,
-                        progress_seconds: Math.floor(progressSeconds)
+            // Plain text documents are fetched and shown as text (HTML/PDF use iframes)
+            document.querySelectorAll('[data-text-src]').forEach(function (element) {
+                fetch(element.dataset.textSrc)
+                    .then(function (response) {
+                        if (!response.ok) { throw new Error('HTTP ' + response.status); }
+                        return response.text();
                     })
-                }).catch(err => console.error('Failed to save progress:', err));
-            }
+                    .then(function (text) {
+                        element.textContent = text;
+                    })
+                    .catch(function (error) {
+                        element.textContent = 'Could not load this file: ' + error.message;
+                        element.classList.add('error');
+                    });
+            });
 
-            function markCompleted() {
-                if (isCompleted) return;
-
-                const currentTime = activeMedia ? activeMedia.currentTime : 0;
-                saveProgress(currentTime, true);
-                markAsCompleted();
-            }
-
-            function markAsCompleted() {
-                const btn = document.querySelector('button[onclick="markCompleted()"]');
-                if (btn) {
-                    btn.textContent = 'Completed ✓';
-                    btn.style.background = '#28a745';
-                    btn.disabled = true;
-                }
-                isCompleted = true;
-                showNotification('Lesson marked as completed!', 'success');
-            }
-
-            function showNotification(message, type = 'info') {
+            function showNotification(message, type) {
                 const notification = document.createElement('div');
-                notification.style.cssText = `
-                    position: fixed;
-                    top: 20px;
-                    right: 20px;
-                    background: ${type === 'success' ? '#28a745' : '#007acc'};
-                    color: white;
-                    padding: 15px 20px;
-                    border-radius: 5px;
-                    z-index: 10000;
-                    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
-                    opacity: 0;
-                    transform: translateY(-20px);
-                    transition: all 0.3s ease;
-                `;
+                let background = '#007acc';
+                if (type === 'success') { background = '#28a745'; }
+                if (type === 'error') { background = '#c0392b'; }
+                notification.style.cssText = 'position:fixed;top:20px;right:20px;color:#fff;' +
+                    'padding:15px 20px;border-radius:5px;z-index:10000;max-width:320px;opacity:0;' +
+                    'transform:translateY(-20px);transition:all .3s ease;' +
+                    'box-shadow:0 4px 6px rgba(0,0,0,0.3);';
+                notification.style.background = background;
                 notification.textContent = message;
-
                 document.body.appendChild(notification);
-
-                setTimeout(() => {
+                setTimeout(function () {
                     notification.style.opacity = '1';
                     notification.style.transform = 'translateY(0)';
                 }, 100);
-
-                setTimeout(() => {
+                setTimeout(function () {
                     notification.style.opacity = '0';
                     notification.style.transform = 'translateY(-20px)';
-                    setTimeout(() => {
-                        if (document.body.contains(notification)) {
-                            document.body.removeChild(notification);
-                        }
-                    }, 300);
+                    setTimeout(function () { notification.remove(); }, 300);
                 }, 3000);
             }
 
-            // Keyboard shortcuts
-            document.addEventListener('keydown', function(e) {
-                if (activeMedia && !e.ctrlKey && !e.altKey && !e.metaKey) {
-                    switch(e.key) {
-                        case ' ':
-                            e.preventDefault();
-                            if (activeMedia.paused) {
-                                activeMedia.play();
-                            } else {
-                                activeMedia.pause();
-                            }
-                            break;
-                        case 'ArrowLeft':
-                            e.preventDefault();
-                            activeMedia.currentTime = Math.max(0, activeMedia.currentTime - 10);
-                            break;
-                        case 'ArrowRight':
-                            e.preventDefault();
-                            activeMedia.currentTime = Math.min(activeMedia.duration, activeMedia.currentTime + 10);
-                            break;
-                        case 'ArrowUp':
-                            e.preventDefault();
-                            activeMedia.volume = Math.min(1, activeMedia.volume + 0.1);
-                            showNotification(`Volume: ${Math.round(activeMedia.volume * 100)}%`);
-                            break;
-                        case 'ArrowDown':
-                            e.preventDefault();
-                            activeMedia.volume = Math.max(0, activeMedia.volume - 0.1);
-                            showNotification(`Volume: ${Math.round(activeMedia.volume * 100)}%`);
-                            break;
+            function saveProgress(seconds, completedFlag) {
+                const payload = { lesson_path: lessonPath };
+                if (typeof seconds === 'number' && isFinite(seconds)) {
+                    payload.progress_seconds = Math.floor(seconds);
+                }
+                // Only send "completed" when it really changes, otherwise a periodic
+                // save would clear a lesson that is already finished.
+                if (typeof completedFlag === 'boolean') { payload.completed = completedFlag; }
+                return fetch('/api/progress', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                })
+                    .then(function (response) { return response.json(); })
+                    .then(function (data) {
+                        if (data.error) { throw new Error(data.error); }
+                        saveWarningShown = false;
+                        return data;
+                    })
+                    .catch(function (error) {
+                        console.error('Failed to save progress:', error);
+                        if (!saveWarningShown) {
+                            saveWarningShown = true;
+                            showNotification('Progress could not be saved: ' + error.message, 'error');
+                        }
+                    });
+            }
+
+            function syncRateControl(rate) {
+                if (!rateSelect) { return; }
+                const value = String(rate);
+                if (!rateSelect.querySelector('option[value="' + value + '"]')) {
+                    const option = document.createElement('option');
+                    option.value = value;
+                    option.textContent = value + '×';
+                    rateSelect.appendChild(option);
+                }
+                rateSelect.value = value;
+            }
+
+            function applyPlaybackRate(rate) {
+                if (!isFinite(rate) || rate <= 0) { return; }
+                if (activeMedia) { activeMedia.playbackRate = rate; }
+                syncRateControl(rate);
+            }
+
+            function startAutoplay(media) {
+                if (!media) { return; }
+                const attempt = media.play();
+                if (attempt && typeof attempt.catch === 'function') {
+                    attempt.catch(function () {
+                        showNotification('Autoplay was blocked by the browser - press play to continue',
+                                         'error');
+                    });
+                }
+            }
+
+            // The chosen speed is remembered and reapplied to every following lesson.
+            if (activeMedia) {
+                applyPlaybackRate(parseFloat(readPreference(RATE_KEY, '1')));
+                activeMedia.addEventListener('ratechange', function () {
+                    const rate = activeMedia.playbackRate;
+                    syncRateControl(rate);
+                    writePreference(RATE_KEY, String(rate));
+                });
+            }
+
+            if (rateSelect) {
+                rateSelect.addEventListener('change', function () {
+                    const rate = parseFloat(rateSelect.value);
+                    applyPlaybackRate(rate);
+                    writePreference(RATE_KEY, String(rate));
+                });
+            }
+
+            if (autoplayToggle) {
+                autoplayToggle.addEventListener('change', function () {
+                    autoplayEnabled = autoplayToggle.checked;
+                    writePreference(AUTOPLAY_KEY, autoplayEnabled ? '1' : '0');
+                });
+            }
+
+            function applyCompletedState() {
+                if (!markButton) { return; }
+                markButton.textContent = 'Completed ✓';
+                markButton.disabled = true;
+            }
+
+            function markCompleted() {
+                if (completed) { return; }
+                completed = true;
+                applyCompletedState();
+                showNotification('Lesson marked as completed!', 'success');
+                saveProgress(activeMedia ? activeMedia.currentTime : 0, true);
+            }
+
+            if (initialCompleted) { applyCompletedState(); }
+
+            function formatTime(totalSeconds) {
+                const seconds = Math.max(0, Math.floor(totalSeconds));
+                return Math.floor(seconds / 60) + ':' + String(seconds % 60).padStart(2, '0');
+            }
+
+            if (activeMedia) {
+                let lastSavedSecond = 0;
+
+                activeMedia.addEventListener('timeupdate', function () {
+                    if (activeMedia.currentTime - lastSavedSecond >= 15) {
+                        lastSavedSecond = activeMedia.currentTime;
+                        saveProgress(activeMedia.currentTime);
                     }
+                });
+
+                activeMedia.addEventListener('pause', function () {
+                    if (activeMedia.currentTime > 0) {
+                        saveProgress(activeMedia.currentTime);
+                    }
+                });
+
+                activeMedia.addEventListener('ended', function () {
+                    const wasCompleted = completed;
+                    const advance = autoplayEnabled && autoplayHref;
+                    saveProgress(activeMedia.currentTime, true);
+                    completed = true;
+                    applyCompletedState();
+
+                    if (advance) {
+                        showNotification('Completed - up next: ' + (autoplayTitle || 'next lesson'),
+                                         'success');
+                        // let the progress request finish before leaving the page
+                        window.setTimeout(function () { window.location.href = autoplayHref; }, 900);
+                    } else if (!wasCompleted) {
+                        showNotification('Lesson marked as completed!', 'success');
+                    }
+                });
+
+                // Resume + optional autoplay, both only possible once the duration is known.
+                // Doing this on loadedmetadata is why the old version resumed so rarely.
+                const initPlayback = function () {
+                    applyPlaybackRate(activeMedia.playbackRate);
+                    if (savedProgress > 0) {
+                        const duration = activeMedia.duration;
+                        if (!isFinite(duration) || savedProgress < duration - 5) {
+                            activeMedia.currentTime = savedProgress;
+                            showNotification('Resumed at ' + formatTime(savedProgress), 'info');
+                        }
+                    }
+                    if (autoplayRequested) {
+                        startAutoplay(activeMedia);
+                    }
+                };
+                if (activeMedia.readyState >= 1) {
+                    initPlayback();
+                } else {
+                    activeMedia.addEventListener('loadedmetadata', initPlayback, { once: true });
+                }
+            }
+
+            document.addEventListener('keydown', function (event) {
+                if (!activeMedia || event.ctrlKey || event.altKey || event.metaKey) { return; }
+                switch (event.key) {
+                    case ' ':
+                        event.preventDefault();
+                        if (activeMedia.paused) { activeMedia.play(); } else { activeMedia.pause(); }
+                        break;
+                    case 'ArrowLeft':
+                        event.preventDefault();
+                        activeMedia.currentTime = Math.max(0, activeMedia.currentTime - 10);
+                        break;
+                    case 'ArrowRight':
+                        event.preventDefault();
+                        activeMedia.currentTime = Math.min(activeMedia.duration || 0,
+                                                          activeMedia.currentTime + 10);
+                        break;
+                    case 'ArrowUp':
+                        event.preventDefault();
+                        activeMedia.volume = Math.min(1, activeMedia.volume + 0.1);
+                        showNotification('Volume: ' + Math.round(activeMedia.volume * 100) + '%', 'info');
+                        break;
+                    case 'ArrowDown':
+                        event.preventDefault();
+                        activeMedia.volume = Math.max(0, activeMedia.volume - 0.1);
+                        showNotification('Volume: ' + Math.round(activeMedia.volume * 100) + '%', 'info');
+                        break;
                 }
             });
 
-            // Set completed state if already completed
-            if ({{ 'true' if lesson.completed else 'false' }}) {
-                markAsCompleted();
-            }
+
         </script>
+
     </div>
 </body>
 </html>

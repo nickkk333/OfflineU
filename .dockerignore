@@ -23,12 +23,15 @@ Dockerfile
 
 # OfflineU specific
 .offlineu_progress.json
+*_progress.json
 data/
 courses/
+tests/
+dist/
 
-# Auto-generated templates (created at runtime if missing)
-# Leave commented if you modify templates
-# templates/
+# The templates/ directory is NOT ignored: it is the single source of truth for
+# the UI and must be part of the image. (Its path is resolved relative to
+# offlineu_core.py, so the folder is found no matter what the workdir is.)
 
 # Harmless, but reduce image size. In the future, it may make more sense to put 
 # everything needed by the image in e.g., /app and modify the Dockerfile to copy from 
