@@ -391,6 +391,148 @@ func TestCastIsRecordedLikeOpeningALesson(t *testing.T) {
 	}
 }
 
+func TestSeekRepositionsAPlainFile(t *testing.T) {
+	env := newTestEnv(t)
+	env.loadCourse()
+	fake := newFakeRenderer(t)
+	seedRenderers(env.app.DLNA, fake.renderer(t))
+
+	if response := env.request(http.MethodPost, "/api/dlna/cast", map[string]any{
+		"device":      "uuid:fake-renderer",
+		"lesson_path": "Section 1/01 - Intro.mp4",
+		"duration":    600,
+	}); response.Code != http.StatusOK {
+		t.Fatalf("status = %d %s", response.Code, response.Body.String())
+	}
+	session := env.app.currentCast()
+	t.Cleanup(func() { env.app.endCast(session) })
+
+	if err := env.app.castSeek(session, 125); err != nil {
+		t.Fatalf("seek failed: %v", err)
+	}
+	if session.StartSeconds != 125 {
+		t.Errorf("start seconds = %v, want 125", session.StartSeconds)
+	}
+	if session.LastSaved != 125 {
+		t.Errorf("the saved position should follow the seek: %v", session.LastSaved)
+	}
+	// The device was told, in the format AVTransport expects.
+	body := ""
+	actions := fake.recorded()
+	for index, action := range actions {
+		if action == "Seek" {
+			body = fake.bodyOf(index)
+			break
+		}
+	}
+	if body == "" {
+		t.Fatalf("no Seek was sent to the device: %v", actions)
+	}
+	if !strings.Contains(body, "<Target>00:02:05</Target>") || !strings.Contains(body, "REL_TIME") {
+		t.Errorf("seek request = %s", body)
+	}
+
+	// Seeking past the end lands just before it, so the lesson can still end.
+	if err := env.app.castSeek(session, 99999); err != nil {
+		t.Fatalf("seek failed: %v", err)
+	}
+	if session.StartSeconds != 599 {
+		t.Errorf("start seconds = %v, want 599", session.StartSeconds)
+	}
+}
+
+func TestSeekRestartsAConvertedStream(t *testing.T) {
+	env := newTestEnv(t)
+	env.loadCourse()
+	fake := newFakeRenderer(t)
+	seedRenderers(env.app.DLNA, fake.renderer(t))
+	// "ffmpeg" is present, so the cast hands over a converted stream that the
+	// device cannot seek in.
+	env.app.Transcoder = &Transcoder{ffmpeg: "ffmpeg"}
+
+	if response := env.request(http.MethodPost, "/api/dlna/cast", map[string]any{
+		"device":      "uuid:fake-renderer",
+		"lesson_path": "Section 1/01 - Intro.mp4",
+		"transcode":   "on",
+		"duration":    600,
+	}); response.Code != http.StatusOK {
+		t.Fatalf("status = %d %s", response.Code, response.Body.String())
+	}
+	session := env.app.currentCast()
+	t.Cleanup(func() { env.app.endCast(session) })
+	if !session.Converted {
+		t.Fatal("the cast should be using a converted stream")
+	}
+
+	if err := env.app.castSeek(session, 300); err != nil {
+		t.Fatalf("seek failed: %v", err)
+	}
+	if session.StartSeconds != 300 {
+		t.Errorf("start seconds = %v, want 300", session.StartSeconds)
+	}
+	// A converted stream is restarted instead of seeked, and ffmpeg gets -ss.
+	if actions := fake.recorded(); countOf(actions, "SetAVTransportURI") != 2 {
+		t.Errorf("the stream was not handed over again: %v", actions)
+	}
+	last := ""
+	for index, action := range fake.recorded() {
+		if action == "SetAVTransportURI" {
+			last = fake.bodyOf(index)
+		}
+	}
+	if !strings.Contains(last, "start=300") {
+		t.Errorf("the restarted stream does not start at 300 s: %s", last)
+	}
+}
+
+func TestSeekThroughTheControlEndpoint(t *testing.T) {
+	env := newTestEnv(t)
+	env.loadCourse()
+	fake := newFakeRenderer(t)
+	seedRenderers(env.app.DLNA, fake.renderer(t))
+
+	if response := env.request(http.MethodPost, "/api/dlna/cast", map[string]any{
+		"device":      "uuid:fake-renderer",
+		"lesson_path": "Section 1/01 - Intro.mp4",
+		"duration":    600,
+	}); response.Code != http.StatusOK {
+		t.Fatalf("status = %d %s", response.Code, response.Body.String())
+	}
+	session := env.app.currentCast()
+	t.Cleanup(func() { env.app.endCast(session) })
+
+	if response := env.request(http.MethodPost, "/api/dlna/control", map[string]any{
+		"device": "uuid:fake-renderer",
+		"action": "seek",
+	}); response.Code != http.StatusBadRequest {
+		t.Errorf("without a position: status = %d, want 400", response.Code)
+	}
+	response := env.request(http.MethodPost, "/api/dlna/control", map[string]any{
+		"device":   "uuid:fake-renderer",
+		"action":   "seek",
+		"position": 90,
+	})
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d %s", response.Code, response.Body.String())
+	}
+	if session.StartSeconds != 90 {
+		t.Errorf("start seconds = %v, want 90", session.StartSeconds)
+	}
+	if view := env.app.castSnapshot(); view.Position < 89 {
+		t.Errorf("the session does not report the new position: %+v", view)
+	}
+}
+
+func countOf(actions []string, wanted string) int {
+	found := 0
+	for _, action := range actions {
+		if action == wanted {
+			found++
+		}
+	}
+	return found
+}
+
 func TestWatchdogWaitsWhileAnotherCourseIsOpen(t *testing.T) {
 	env := newTestEnv(t)
 	env.loadCourse()

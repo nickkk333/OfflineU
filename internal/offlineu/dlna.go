@@ -198,16 +198,34 @@ func (h *DLNAHub) Cast(renderer Renderer, item MediaItem, startSeconds int) erro
 		return fmt.Errorf("%s did not start playing: %w", renderer.DisplayName(), err)
 	}
 	if startSeconds > 0 {
-		if err := renderer.call(h.client, "Seek", [][2]string{
-			{"InstanceID", "0"},
-			{"Unit", "REL_TIME"},
-			{"Target", formatUPnPDuration(startSeconds)},
-		}); err != nil {
+		if err := renderer.seek(h.client, startSeconds); err != nil {
 			// Not fatal: the renderer is already playing, just from 0:00.
 			logf("dlna: %s refused the seek to %ds: %v", renderer.DisplayName(), startSeconds, err)
 		}
 	}
 	return nil
+}
+
+// Seek jumps inside the lesson that is playing. Renderers that cannot seek say
+// so with a UPnP error, which the caller turns into a message for the UI.
+func (h *DLNAHub) Seek(renderer Renderer, seconds int) error {
+	client := h.client
+	if client == nil {
+		client = &http.Client{Timeout: dlnaActionTimeout}
+	}
+	return renderer.seek(client, seconds)
+}
+
+// seek is the Seek action of the AVTransport service.
+func (r Renderer) seek(client *http.Client, seconds int) error {
+	if seconds < 0 {
+		seconds = 0
+	}
+	return r.call(client, "Seek", [][2]string{
+		{"InstanceID", "0"},
+		{"Unit", "REL_TIME"},
+		{"Target", formatUPnPDuration(seconds)},
+	})
 }
 
 // Control sends a transport action ("Play", "Pause" or "Stop") to a renderer.

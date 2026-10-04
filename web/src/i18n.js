@@ -193,6 +193,7 @@ const en = {
     noDuration: 'length unknown - it will not be marked finished on its own',
     convertedHint: 'converted for this device',
     next: '⏭ Next',
+    seekHint: 'Click the bar to jump to that position',
     nextUp: 'Next: {title}',
     compatMode: 'Compatibility mode',
     compatHint:
@@ -399,6 +400,7 @@ const zh = {
     noDuration: '时长未知，不会自动标记完成',
     convertedHint: '已为设备转换',
     next: '⏭ 下一节',
+    seekHint: '点击进度条可跳转到该位置',
     nextUp: '下一节：{title}',
     compatMode: '兼容模式',
     compatHint:

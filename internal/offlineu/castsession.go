@@ -130,6 +130,23 @@ func (s *CastSession) resume(now time.Time) {
 	}
 }
 
+// setPosition moves a running cast to a position, forgetting everything the
+// clock and the device knew about the old one.
+func (s *CastSession) setPosition(position float64, now time.Time, paused bool) {
+	s.StartSeconds = position
+	s.StartedAt = now
+	s.PausedFor = 0
+	s.PausedAt = time.Time{}
+	s.RealPosition = 0
+	s.RealAt = time.Time{}
+	s.RealState = ""
+	s.LastSaved = position
+	s.State = CastStatePlaying
+	if paused {
+		s.PausedAt = now
+	}
+}
+
 // reset points the session at the next lesson it is about to play.
 func (s *CastSession) reset(lesson *Lesson, file string, duration float64, converted bool, now time.Time) {
 	s.LessonPath = lesson.RelPath
@@ -345,6 +362,73 @@ func (a *App) castTick(session *CastSession) bool {
 	}
 	logf("dlna: %s continues with %q", session.Device, session.LessonTitle)
 	return true
+}
+
+// castSeek jumps to a position inside the lesson that is playing.
+//
+// A plain file can be seeked on the device itself; a converted stream has no
+// timeline the device could jump in, so ffmpeg is restarted with -ss and the
+// device gets the new URL - that is what the progress bar of the browser does
+// when it is clicked.
+func (a *App) castSeek(session *CastSession, position float64) error {
+	if session == nil {
+		return errors.New("no cast is running")
+	}
+	if position < 0 {
+		position = 0
+	}
+	if session.Duration > 0 && position > session.Duration-1 {
+		// Stopping a second short of the end lets the watchdog still see the
+		// lesson finish and continue with the next one.
+		position = session.Duration - 1
+		if position < 0 {
+			position = 0
+		}
+	}
+	course := a.Store.Get()
+	if course == nil || course.Path != session.CoursePath {
+		return errors.New("the cast belongs to another course")
+	}
+	lesson := FindLessonInTree(course.Root, session.LessonPath)
+	if lesson == nil {
+		return errors.New("lesson not found")
+	}
+	renderer, ok := a.DLNA.Lookup(session.UDN)
+	if !ok {
+		return errors.New("the cast device was not found on the network")
+	}
+
+	a.cast.mutex.Lock()
+	wasPaused := !session.PausedAt.IsZero()
+	a.cast.mutex.Unlock()
+
+	if session.Converted {
+		// Keep the stream that was already in use: "auto" would happily decide
+		// differently now and restart a converted cast as a plain file.
+		target, hasMedia, err := a.castTarget(session.BaseURL, course, lesson, "on", int(position))
+		if err != nil {
+			return err
+		}
+		if !hasMedia {
+			return errors.New("this lesson has no media to cast")
+		}
+		if err := a.DLNA.Cast(renderer, target.Item, 0); err != nil {
+			return err
+		}
+		// Casting always starts playing, so a paused cast has to be paused again.
+		if wasPaused {
+			_ = a.DLNA.Control(renderer, "pause")
+		}
+	} else if err := a.DLNA.Seek(renderer, int(position)); err != nil {
+		return err
+	}
+
+	a.cast.mutex.Lock()
+	if a.cast.session == session && !session.stopped {
+		session.setPosition(position, time.Now(), wasPaused)
+	}
+	a.cast.mutex.Unlock()
+	return nil
 }
 
 // castNext hands the next playable lesson to the device the session runs on and

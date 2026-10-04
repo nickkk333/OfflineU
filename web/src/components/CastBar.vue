@@ -3,7 +3,7 @@
 // (the server asks the device where it is), shows how far the lesson got and
 // lets the lesson be paused, skipped or stopped from the browser. When the
 // device reaches the end, the server pushes the next lesson by itself.
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import { api, formatTime } from '../api.js'
 import { t } from '../i18n.js'
 import { useToast } from '../composables/useToast.js'
@@ -24,6 +24,40 @@ const percent = computed(() => {
 const paused = computed(() => props.session.state === 'paused')
 const ended = computed(() => props.session.state === 'ended')
 const hasNext = computed(() => Boolean(props.session.next_lesson_path))
+// Without a length there is no bar to click: the position is unknown anyway.
+const seekable = computed(() => duration.value > 0 && !ended.value)
+const seeking = ref(false)
+const hoverRatio = ref(0)
+
+function ratioOf(event) {
+  const rect = event.currentTarget.getBoundingClientRect()
+  if (!rect.width) return 0
+  return Math.min(1, Math.max(0, (event.clientX - rect.left) / rect.width))
+}
+
+function onTrackMove(event) {
+  if (!seekable.value) return
+  hoverRatio.value = ratioOf(event)
+}
+
+async function seekTo(position) {
+  seeking.value = true
+  try {
+    await api.castControl(props.session.udn, 'seek', Math.floor(position))
+    emit('refresh')
+  } catch (cause) {
+    toast.error(cause.message)
+  } finally {
+    seeking.value = false
+  }
+}
+
+// Clicking anywhere on the bar jumps there: a plain file is seeked on the
+// device, a converted stream is restarted at that position.
+function onTrackClick(event) {
+  if (!seekable.value || seeking.value) return
+  seekTo(ratioOf(event) * duration.value)
+}
 
 async function control(action) {
   try {
@@ -59,7 +93,19 @@ async function stop() {
       </span>
     </div>
 
-    <div class="cast-bar__track">
+    <div
+      class="cast-bar__track"
+      :class="{ 'cast-bar__track--seekable': seekable, 'cast-bar__track--busy': seeking }"
+      :title="seekable ? t('cast.seekHint') : ''"
+      @click="onTrackClick"
+      @mousemove="onTrackMove"
+      @mouseleave="hoverRatio = 0"
+    >
+      <div
+        v-if="seekable && hoverRatio > 0"
+        class="cast-bar__hover"
+        :style="{ width: hoverRatio * 100 + '%' }"
+      ></div>
       <div class="cast-bar__fill" :class="{ 'cast-bar__fill--idle': paused || ended }" :style="{ width: percent + '%' }"></div>
     </div>
 
@@ -136,13 +182,35 @@ async function stop() {
 }
 
 .cast-bar__track {
+  position: relative;
   height: 7px;
   border-radius: 999px;
   background: rgba(255, 255, 255, 0.12);
   overflow: hidden;
 }
 
+.cast-bar__track--seekable {
+  cursor: pointer;
+  height: 10px;
+}
+
+.cast-bar__track--seekable:hover {
+  box-shadow: 0 0 0 1px var(--border-strong);
+}
+
+.cast-bar__track--busy {
+  cursor: progress;
+}
+
+.cast-bar__hover {
+  position: absolute;
+  inset: 0 auto 0 0;
+  background: rgba(255, 255, 255, 0.18);
+  pointer-events: none;
+}
+
 .cast-bar__fill {
+  position: relative;
   height: 100%;
   border-radius: 999px;
   background: var(--gradient);

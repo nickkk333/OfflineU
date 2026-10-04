@@ -1000,16 +1000,17 @@ func (a *App) handleDLNAControl(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var payload struct {
-		Device string `json:"device"`
-		Action string `json:"action"`
+		Device   string   `json:"device"`
+		Action   string   `json:"action"`
+		Position *float64 `json:"position"` // seconds, for "seek"
 	}
 	if err := decodeJSON(r, &payload); err != nil {
 		writeError(w, http.StatusBadRequest, "device and action are required")
 		return
 	}
 	action := strings.ToLower(strings.TrimSpace(payload.Action))
-	if action != "play" && action != "pause" && action != "stop" && action != "next" {
-		writeError(w, http.StatusBadRequest, "action must be play, pause, stop or next")
+	if action != "play" && action != "pause" && action != "stop" && action != "next" && action != "seek" {
+		writeError(w, http.StatusBadRequest, "action must be play, pause, stop, next or seek")
 		return
 	}
 	renderer, ok := a.DLNA.Lookup(payload.Device)
@@ -1028,6 +1029,19 @@ func (a *App) handleDLNAControl(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if err := a.castNext(session); err != nil {
+			writeError(w, http.StatusBadGateway, err.Error())
+			return
+		}
+	case "seek":
+		if session == nil {
+			writeError(w, http.StatusBadRequest, "no cast is running on this device")
+			return
+		}
+		if payload.Position == nil {
+			writeError(w, http.StatusBadRequest, "position is required")
+			return
+		}
+		if err := a.castSeek(session, *payload.Position); err != nil {
 			writeError(w, http.StatusBadGateway, err.Error())
 			return
 		}

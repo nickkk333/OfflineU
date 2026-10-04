@@ -65,8 +65,15 @@ export const api = {
         duration: Math.floor(duration || 0)
       })
     }),
-  castControl: (device, action) =>
-    request('/api/dlna/control', { method: 'POST', body: JSON.stringify({ device, action }) }),
+  castControl: (device, action, position) =>
+    request('/api/dlna/control', {
+      method: 'POST',
+      body: JSON.stringify({
+        device,
+        action,
+        ...(typeof position === 'number' && Number.isFinite(position) ? { position } : {})
+      })
+    }),
   // Where the TV currently is - the browser polls this to follow the cast.
   castSession: () => request('/api/dlna/session')
 }

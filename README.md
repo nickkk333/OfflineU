@@ -162,7 +162,7 @@ stays scriptable:
 | POST   | `/api/dlna/cast`                        | `{"device": "<udn>", "lesson_path": "...", "start_seconds": 30, "transcode": "auto"\|"on"\|"off"}` — push a lesson to a renderer; `converted` in the answer says whether a stream was used |
 | GET    | `/api/dlna/stream?lesson=<path>&start=30` | The converted stream (MPEG-TS / AAC) a renderer pulls while playing |
 | GET    | `/api/dlna/session`                     | The running cast: device, lesson, position/duration, state, next lesson |
-| POST   | `/api/dlna/control`                     | `{"device": "<udn>", "action": "play"\|"pause"\|"stop"}`          |
+| POST   | `/api/dlna/control`                     | `{"device": "<udn>", "action": "play"\|"pause"\|"stop"\|"next"\|"seek", "position": 90}` |
 
 `/api/state` and `/api/lesson` carry `dlna_enabled`, so the UI hides the cast button when
 `OFFLINEU_DLNA=off`. `OFFLINEU_DLNA=off` makes the three DLNA endpoints answer `403`.
@@ -252,6 +252,10 @@ plays next), while the buttons pause, skip and stop the device from the browser.
   browser measured while loading the file, and - while playing - the `TrackDuration` the device
   reports. If none of them answers, the cast still shows its position but cannot tell that the
   lesson ended; the progress bar then says so, and you mark the lesson completed by hand.
+* **Click anywhere on the progress bar to jump there.** A cast of the plain file is seeked on the
+  device (`Seek` with `REL_TIME`); a converted stream has no timeline to jump in, so ffmpeg is
+  restarted at that position (`-ss`) and the device gets the new URL. Jumping past the end stops a
+  second before it, so the lesson can still finish and continue.
 * When the lesson ends, OfflineU **pushes the next playable lesson to the same device** by itself
   (documents are skipped) and the browser follows to the new lesson. This is done by a watchdog in
   the server, not by the page, so it also works with the browser closed. Turn it off by passing
