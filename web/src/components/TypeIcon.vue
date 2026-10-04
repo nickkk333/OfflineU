@@ -1,5 +1,6 @@
 <script setup>
 import { computed } from 'vue'
+import { t } from '../i18n.js'
 
 const props = defineProps({
   type: { type: String, default: 'text' },
@@ -7,10 +8,9 @@ const props = defineProps({
 })
 
 const ICONS = { video: '▶', audio: '♫', quiz: '✎', text: '▤' }
-const LABELS = { video: 'Video', audio: 'Audio', quiz: 'Quiz', text: 'Document' }
 
 const icon = computed(() => ICONS[props.type] || ICONS.text)
-const label = computed(() => LABELS[props.type] || LABELS.text)
+const label = computed(() => t(ICONS[props.type] ? `types.${props.type}` : 'types.text'))
 </script>
 
 <template>

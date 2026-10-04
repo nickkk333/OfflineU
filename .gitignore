@@ -16,6 +16,9 @@ web/dist/*
 courses/
 data/
 
+# ---- Exported docker images (docker save) ----
+/image-dist/
+
 # ---- Editors / OS ----
 .vscode/
 .idea/

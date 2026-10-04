@@ -46,6 +46,7 @@ func run(argv []string) int {
 	debug := flags.Bool("debug", false, "enable verbose logging")
 	webDir := flags.String("web-dir", "", "serve the frontend from this directory instead of the embedded build")
 	checkWeb := flags.Bool("check-web", false, "verify that the bundled frontend assets are present")
+	capCheck := flags.Bool("cap-check", false, "report whether the read capability (CAP_DAC_OVERRIDE) is active, then exit")
 	flags.BoolVar(checkWeb, "check-templates", false, "alias of --check-web (kept for compatibility)")
 	flags.Usage = func() { printUsage(flags) }
 
@@ -54,6 +55,25 @@ func run(argv []string) int {
 			return 0
 		}
 		return 2
+	}
+
+	if *capCheck {
+		// /entrypoint.sh probes the copy of the binary that carries the file
+		// capability before it starts it: a container whose bounding set lacks
+		// CAP_DAC_OVERRIDE refuses that exec with EPERM, and the entrypoint then
+		// falls back to the plain copy instead of dying on startup.
+		readable, known := offlineu.ReadCapability()
+		switch {
+		case !known:
+			fmt.Fprintln(os.Stderr, "Read capability: /proc/self/status is missing (not a Linux container)")
+			return 1
+		case readable:
+			fmt.Println("Read capability: CAP_DAC_OVERRIDE is active")
+			return 0
+		default:
+			fmt.Fprintln(os.Stderr, "Read capability: CAP_DAC_OVERRIDE is not active")
+			return 1
+		}
 	}
 
 	cfg.Host = *host
@@ -86,6 +106,49 @@ func run(argv []string) int {
 	}
 	if cfg.ProgressDir != "" {
 		fmt.Println("Progress files go to " + cfg.ProgressDir)
+	}
+	if len(cfg.Roots) > 0 {
+		fmt.Println("Course folders:")
+		for _, status := range cfg.RootStatuses() {
+			fmt.Printf("  %s -> %s\n", status.Path, status.Summary())
+		}
+	} else if raw := strings.TrimSpace(os.Getenv(offlineu.EnvRoots)); raw != "" {
+		fmt.Printf("Warning: %s=%q resolved to no existing folder, so browsing is unrestricted.\n", offlineu.EnvRoots, raw)
+	}
+	// Say which copy of the binary is running, so a "mapped, but not readable"
+	// report can be traced back: /app/offlineu-cap carries CAP_DAC_OVERRIDE and
+	// reads folders that belong to root, the plain copy does not.
+	if readable, known := offlineu.ReadCapability(); known {
+		if readable {
+			fmt.Println("Read access: CAP_DAC_OVERRIDE is active - a mapped folder is readable even when it belongs to root.")
+		} else {
+			fmt.Println("Read access: no CAP_DAC_OVERRIDE in this container (dropped, or no-new-privileges); a folder only root may read is reported as unreadable.")
+		}
+	}
+	switch cfg.MountIssue() {
+	case offlineu.MountIssueVolume:
+		fmt.Println("\nWarning: a Docker managed volume is mounted instead of your folder.")
+		fmt.Println("Map a host folder onto the container path (host folder -> " + strings.Join(cfg.Roots, " / ") + ") and recreate the container.")
+		fmt.Println(offlineu.MountHint)
+	case offlineu.MountIssueNotMounted:
+		fmt.Println("\nWarning: nothing is mounted on the configured folder(s).")
+		fmt.Println("Check that the mapping's container path is exactly " + strings.Join(cfg.Roots, string(os.PathListSeparator)) + ".")
+		fmt.Println(offlineu.MountHint)
+	case offlineu.MountIssueEmpty:
+		fmt.Println("\nWarning: the folder(s) above are mapped but still empty.")
+		fmt.Println("Copy your course files into the host folder and reload the page - no restart is needed.")
+	case offlineu.MountIssueUnreadable:
+		fmt.Println("\nWarning: the folder(s) above are mapped but cannot be read by " + offlineu.RunAsUser() + ".")
+		fmt.Println("The image normally reads any mapped folder through the CAP_DAC_OVERRIDE of /app/offlineu-cap;")
+		fmt.Println("this container does not provide it (no-new-privileges, --cap-drop DAC_OVERRIDE/ALL, or a")
+		fmt.Println("network share that judges permissions itself). Fix the host folder permissions")
+		fmt.Println("(chmod -R a+rX <host folder>), run the container as the folder's owner")
+		fmt.Println("(user: \"1000:1000\"), or recreate it with --user 0:0 to run as root. The user can only be set when")
+		fmt.Println("the container is created - nothing inside it can become root.")
+	case offlineu.MountIssueMissing:
+		fmt.Println("\nWarning: the configured folder(s) do not exist inside the container.")
+		fmt.Println("Check that the mapping's container path is exactly " + strings.Join(cfg.Roots, string(os.PathListSeparator)) + ".")
+		fmt.Println(offlineu.MountHint)
 	}
 
 	coursePath := ""
@@ -187,6 +250,7 @@ func printUsage(flags *flag.FlagSet) {
 		"  OFFLINEU_HOST           default value for --host\n"+
 		"  OFFLINEU_PORT           default value for --port\n"+
 		"  OFFLINEU_ROOTS          path-list separated allow-list of folders OfflineU may browse and serve\n"+
+		"  OFFLINEU_ROOTS_LABEL    friendly name shown in the UI instead of the mounted folder path\n"+
 		"  OFFLINEU_PROGRESS_DIR   store progress files and the course list in this folder\n"+
 		"  AUTO_LOAD_COURSE        load this course at startup when no path is given\n")
 }

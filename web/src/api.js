@@ -1,9 +1,17 @@
 // Thin wrapper around the Go JSON API. Every helper either returns the parsed
-// payload or throws an Error carrying the backend's message.
+// payload or throws an Error carrying the backend's message (translated while
+// the UI is not in English, see i18n.js).
+import { acceptLanguage, translateServerMessage } from './i18n.js'
+
 async function request(path, options = {}) {
   const response = await fetch(path, {
-    headers: options.body ? { 'Content-Type': 'application/json' } : undefined,
-    ...options
+    ...options,
+    headers: {
+      // Lets the backend localise the handful of strings it produces itself.
+      'Accept-Language': acceptLanguage(),
+      ...(options.body ? { 'Content-Type': 'application/json' } : {}),
+      ...(options.headers || {})
+    }
   })
   const text = await response.text()
   let data = null
@@ -15,7 +23,7 @@ async function request(path, options = {}) {
     }
   }
   if (!response.ok) {
-    throw new Error((data && data.error) || `Request failed with status ${response.status}`)
+    throw new Error(translateServerMessage((data && data.error) || `Request failed with status ${response.status}`))
   }
   return data
 }

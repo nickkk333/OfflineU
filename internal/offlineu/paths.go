@@ -88,6 +88,50 @@ func countMediaFiles(root string, limit int) (int, error) {
 	return media, nil
 }
 
+// rootHasContent reports whether a folder holds anything OfflineU could present:
+// any non-hidden file, at any depth, bounded by limit. It tells "nothing was
+// mounted" (an empty folder) apart from a course that just has few files.
+func rootHasContent(root string, limit int) bool {
+	initial, err := os.ReadDir(root)
+	if err != nil {
+		return false
+	}
+	seen := 0
+	stack := [][]os.DirEntry{initial}
+	dirs := []string{root}
+	for len(stack) > 0 {
+		level := stack[len(stack)-1]
+		stack = stack[:len(stack)-1]
+		current := dirs[len(dirs)-1]
+		dirs = dirs[:len(dirs)-1]
+		for _, entry := range level {
+			seen++
+			// Lots of entries: the folder is clearly not empty, stop walking.
+			if seen > limit {
+				return true
+			}
+			if strings.HasPrefix(entry.Name(), ".") {
+				continue
+			}
+			if entry.IsDir() {
+				if entry.Type()&fs.ModeSymlink != 0 {
+					continue
+				}
+				child := filepath.Join(current, entry.Name())
+				children, err := os.ReadDir(child)
+				if err != nil {
+					continue
+				}
+				stack = append(stack, children)
+				dirs = append(dirs, child)
+				continue
+			}
+			return true
+		}
+	}
+	return false
+}
+
 // sortedEntries lists a directory with folders first and everything sorted
 // case-insensitively, mirroring the Python implementation.
 func sortedEntries(dir string) ([]os.DirEntry, error) {

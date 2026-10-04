@@ -2,6 +2,7 @@
 import { computed, ref, watch } from 'vue'
 import TypeIcon from './TypeIcon.vue'
 import { lessonRoute, formatTime } from '../api.js'
+import { t } from '../i18n.js'
 
 const props = defineProps({
   node: { type: Object, required: true },
@@ -50,7 +51,7 @@ const stats = computed(() => props.node.stats || { completed_lessons: 0, total_l
       <span class="node__chevron" :class="{ 'node__chevron--open': open }" aria-hidden="true">▸</span>
       <span class="node__folder" aria-hidden="true">📁</span>
       <span class="node__name">{{ node.name }}</span>
-      <span class="faint">{{ itemCount }} items</span>
+      <span class="faint">{{ t('tree.items', { count: itemCount }) }}</span>
       <span class="spacer"></span>
       <span v-if="stats.total_lessons" class="node__stats">
         <span class="node__stats-bar">
@@ -81,8 +82,8 @@ const stats = computed(() => props.node.stats || { completed_lessons: 0, total_l
           <span class="lesson__title">{{ lesson.title }}</span>
           <span v-if="lesson.progress_seconds" class="faint">{{ formatTime(lesson.progress_seconds) }}</span>
           <span class="spacer"></span>
-          <span v-if="lesson.completed" class="lesson__done" title="Completed">✓</span>
-          <span v-else class="lesson__pending" title="Not completed yet"></span>
+          <span v-if="lesson.completed" class="lesson__done" :title="t('tree.completed')">✓</span>
+          <span v-else class="lesson__pending" :title="t('tree.notCompleted')"></span>
         </RouterLink>
       </div>
     </Transition>

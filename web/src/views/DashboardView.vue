@@ -4,6 +4,7 @@ import CourseTree from '../components/CourseTree.vue'
 import ProgressBar from '../components/ProgressBar.vue'
 import { lessonRoute } from '../api.js'
 import { refreshState, resetCourse, store } from '../store.js'
+import { t } from '../i18n.js'
 import { useToast } from '../composables/useToast.js'
 
 const toast = useToast()
@@ -27,7 +28,7 @@ async function changeCourse() {
   busy.value = true
   try {
     await resetCourse()
-    toast.info('Pick another course')
+    toast.info(t('toast.pickAnother'))
   } catch (error) {
     toast.error(error.message)
   } finally {
@@ -37,7 +38,7 @@ async function changeCourse() {
 
 async function reload() {
   await refreshState()
-  toast.info('Progress refreshed')
+  toast.info(t('toast.progressRefreshed'))
 }
 </script>
 
@@ -48,20 +49,20 @@ async function reload() {
         <span class="dash__icon" aria-hidden="true">📚</span>
         <div>
           <h2>{{ store.course.name }}</h2>
-          <p class="mono faint">{{ store.course.path }}</p>
+          <p class="mono faint">{{ store.course.display_path || store.course.path }}</p>
         </div>
       </div>
       <div class="row">
-        <button type="button" class="btn btn--ghost btn--sm" @click="reload">⟳ Refresh</button>
+        <button type="button" class="btn btn--ghost btn--sm" @click="reload">{{ t('common.refresh') }}</button>
         <button type="button" class="btn btn--ghost btn--sm" :disabled="busy" @click="changeCourse">
-          ⇄ Select different course
+          {{ t('dash.changeCourse') }}
         </button>
       </div>
     </header>
 
     <section class="dash__grid">
       <div class="card dash__progress">
-        <div class="section-title">📈 Your progress</div>
+        <div class="section-title">{{ t('dash.progressTitle') }}</div>
         <div class="dash__percent">{{ stats.completion_percentage.toFixed(1) }}<span>%</span></div>
         <ProgressBar
           :percentage="stats.completion_percentage"
@@ -69,35 +70,35 @@ async function reload() {
           :total="stats.total_lessons"
         />
         <div class="chips">
-          <span class="chip"><strong>{{ stats.total_lessons }}</strong> lessons</span>
-          <span class="chip chip--done"><strong>{{ stats.completed_lessons }}</strong> completed</span>
-          <span class="chip"><strong>{{ remaining }}</strong> remaining</span>
+          <span class="chip"><strong>{{ stats.total_lessons }}</strong> {{ t('dash.chipLessons') }}</span>
+          <span class="chip chip--done"><strong>{{ stats.completed_lessons }}</strong> {{ t('dash.chipCompleted') }}</span>
+          <span class="chip"><strong>{{ remaining }}</strong> {{ t('dash.chipRemaining') }}</span>
         </div>
       </div>
 
       <div class="card dash__resume" :class="{ 'dash__resume--empty': !stats.last_accessed_url }">
         <template v-if="stats.last_accessed_url">
-          <span class="faint">Continue where you left off</span>
+          <span class="faint">{{ t('dash.resumeLabel') }}</span>
           <h3>{{ stats.last_accessed_title || stats.last_accessed_path }}</h3>
-          <RouterLink class="btn" :to="lessonRoute(stats.last_accessed_url)">▶ Resume lesson</RouterLink>
+          <RouterLink class="btn" :to="lessonRoute(stats.last_accessed_url)">{{ t('dash.resumeButton') }}</RouterLink>
         </template>
         <template v-else>
-          <span class="faint">Nothing started yet</span>
-          <h3>Pick a lesson below to begin</h3>
-          <p class="faint">Your position is remembered automatically, even after a restart.</p>
+          <span class="faint">{{ t('dash.emptyLabel') }}</span>
+          <h3>{{ t('dash.emptyTitle') }}</h3>
+          <p class="faint">{{ t('dash.emptyText') }}</p>
         </template>
       </div>
     </section>
 
     <section class="card">
       <div class="dash__tree-head">
-        <div class="section-title">🧭 Course content</div>
+        <div class="section-title">{{ t('dash.contentTitle') }}</div>
         <span class="spacer"></span>
-        <input v-model="filter" class="input dash__search" type="search" placeholder="Search lessons…" />
+        <input v-model="filter" class="input dash__search" type="search" :placeholder="t('dash.searchPlaceholder')" />
       </div>
       <div class="dash__tree">
         <CourseTree v-if="store.tree" :node="store.tree" :filter="filter" />
-        <p v-else class="empty-state">This course has no supported files yet.</p>
+        <p v-else class="empty-state">{{ t('dash.emptyContent') }}</p>
       </div>
     </section>
   </div>

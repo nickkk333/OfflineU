@@ -7,17 +7,40 @@ services:
     ports:
       - "5000:5000"
     environment:
-      # Everything under /app/courses is browsable and servable, nothing else.
-      - OFFLINEU_ROOTS=/app/courses
+      # /courses is the mount point of this image; map your own folder onto it.
+      - OFFLINEU_ROOTS=/courses
+      # Optional: name shown in the UI instead of the mount point name
+      # - OFFLINEU_ROOTS_LABEL=My courses
       # Keep progress files and the course list out of the (read-only) course folder.
       - OFFLINEU_PROGRESS_DIR=/app/data
       # Optional: skip the picker and load a course at startup.
-      # - AUTO_LOAD_COURSE=/app/courses/My Course
+      # - AUTO_LOAD_COURSE=/courses/My Course
     volumes:
-      # Mount your course library here (read-only is enough, progress lives in ./data)
-      - ./courses:/app/courses:ro
+      # Mount your course library here (read-only is enough, progress lives in ./data).
+      # Without this line the picker stays empty and asks you to add it.
+      - ./courses:/courses:ro
       # Mount a local directory for user data/progress
       - ./data:/app/data
+    # The container runs as uid 10001, but the image hands that uid the read
+    # capability CAP_DAC_OVERRIDE: a mapped folder is readable even when it
+    # belongs to root or to another NAS account, with no --privileged and no
+    # chmod on the NAS (see "Permissions" in README.md).
+    # Only if the capability is unavailable does the picker report "mapped, but
+    # not readable" - because the container dropped it (cap_drop),
+    # no-new-privileges is set, or the folder is a network share that checks
+    # permissions itself. Then either fix the host permissions
+    # (chmod -R a+rX), or run as the folder's owner - fnOS's first user is
+    # normally 1000:1000 - or as root:
+    # user: "1000:1000"
+    # user: "0:0"
+    #
+    # Hardening stays possible: cap_drop is harmless as long as DAC_OVERRIDE is
+    # not dropped (the entrypoint then starts the plain binary and OfflineU keeps
+    # working), no-new-privileges only costs the built-in capability, and a
+    # dropped capability can be handed back with the line below (measured:
+    # cap_add is applied after cap_drop).
+    # cap_drop: ["ALL"]
+    # cap_add: ["DAC_OVERRIDE"]
     restart: unless-stopped
     healthcheck:
       # BusyBox wget is part of the Alpine base image used by the Dockerfile.

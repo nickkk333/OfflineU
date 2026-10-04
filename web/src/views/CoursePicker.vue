@@ -1,7 +1,8 @@
 <script setup>
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import DirectoryBrowser from '../components/DirectoryBrowser.vue'
-import { forgetCourse, loadCourse, store } from '../store.js'
+import { forgetCourse, loadCourse, refreshState, store } from '../store.js'
+import { t } from '../i18n.js'
 import { useToast } from '../composables/useToast.js'
 
 const toast = useToast()
@@ -12,7 +13,7 @@ async function openRecent(path) {
   loading.value = true
   try {
     const payload = await loadCourse(path)
-    toast.success(`Loaded "${payload.course_name}"`)
+    toast.success(t('toast.loaded', { name: payload.course_name }))
   } catch (error) {
     toast.error(error.message)
   } finally {
@@ -23,13 +24,13 @@ async function openRecent(path) {
 async function loadFromInput() {
   const value = manualPath.value.trim()
   if (!value) {
-    toast.error('Please enter the path of a course folder.')
+    toast.error(t('toast.enterPath'))
     return
   }
   loading.value = true
   try {
     const payload = await loadCourse(value)
-    toast.success(`Loaded "${payload.course_name}"`)
+    toast.success(t('toast.loaded', { name: payload.course_name }))
     manualPath.value = ''
   } catch (error) {
     toast.error(error.message)
@@ -41,7 +42,7 @@ async function loadFromInput() {
 async function forget(path) {
   try {
     await forgetCourse(path)
-    toast.info('Removed from the recent list')
+    toast.info(t('toast.removedFromRecent'))
   } catch (error) {
     toast.error(error.message)
   }
@@ -57,26 +58,104 @@ function percentOf(recent) {
 function isFinished(recent) {
   return Boolean(recent.total_lessons) && (recent.completed_lessons || 0) >= recent.total_lessons
 }
+
+// The first mapped folder is the one the notice talks about (the image maps
+// exactly one: /courses).
+const primaryRoot = computed(() => store.roots[0] || '/courses')
+
+// The notice used to claim "no course folder is mapped" whatever the real cause
+// was. The server now reports which case it is, so the wording can name it: an
+// empty folder, a folder the container may not read, or a mapping that never
+// arrived.
+const noticeTitle = computed(() => {
+  if (store.mountIssue === 'empty') return t('picker.noticeTitleEmpty', { root: primaryRoot.value })
+  if (store.mountIssue === 'unreadable') return t('picker.noticeTitleUnreadable', { root: primaryRoot.value })
+  if (store.mountIssue === 'missing') return t('picker.noticeTitleMissing', { root: primaryRoot.value })
+  return t('picker.noticeTitle')
+})
+
+const noticeText = computed(() => {
+  if (store.mountIssue === 'empty') return t('picker.noticeTextEmpty')
+  if (store.mountIssue === 'unreadable') return t('picker.noticeTextUnreadable')
+  if (store.mountIssue === 'missing') return t('picker.noticeTextMissing', { root: primaryRoot.value })
+  return t('picker.noticeText')
+})
+
+// The docker run/compose reference only helps when nothing was mapped at all;
+// once the folders are mapped it is just noise.
+const showCommands = computed(() => !['empty', 'unreadable'].includes(store.mountIssue))
+
+// One readable line per mapped folder for the status list.
+function rootStateLabel(status) {
+  if (!status.exists) return t('picker.mountStatusMissing')
+  if (!status.readable) return t('picker.mountStatusUnreadable')
+  if (status.has_files) return t('picker.mountStatusOk', { count: status.entries || 0 })
+  if (status.mount === 'volume') return t('picker.mountStatusVolume')
+  if (status.mount === 'none') return t('picker.mountStatusNotMounted')
+  return t('picker.mountStatusEmpty')
+}
 </script>
 
 <template>
   <div class="picker">
-    <section v-if="store.recentCourses.length" class="card">
-      <div class="section-title">🕘 Recent courses</div>
-      <p class="card__hint">
-        Your previously opened folders are remembered, so you can switch back with one click.
+    <section v-if="store.needsMount" class="card card--notice">
+      <div class="section-title">{{ noticeTitle }}</div>
+      <p class="card__hint">{{ noticeText }}</p>
+
+      <p v-if="store.rootsDetail.length" class="card__hint">
+        <strong>{{ t('picker.mountStatusTitle') }}</strong>
       </p>
+      <ul v-if="store.rootsDetail.length" class="tips">
+        <li v-for="status in store.rootsDetail" :key="status.path">
+          <strong>{{ status.display || status.path }}</strong>
+          <span class="mono">{{ status.path }}</span> — {{ rootStateLabel(status) }}
+          <span v-if="status.mount_detail" class="faint mono">({{ status.mount_detail }})</span>
+        </li>
+      </ul>
+
+      <ul v-if="store.mountIssue === 'empty'" class="tips">
+        <li>{{ t('picker.emptyFixCopy') }}</li>
+        <li>{{ t('picker.emptyFixRecheck') }}</li>
+        <li>{{ t('picker.emptyFixBrowse') }}</li>
+      </ul>
+      <ul v-else-if="store.mountIssue === 'unreadable'" class="tips">
+        <li>{{ t('picker.unreadableFixChmod') }}</li>
+        <li>{{ t('picker.unreadableFixOwner') }}</li>
+        <li>{{ t('picker.unreadableFixRoot') }}</li>
+        <li>{{ t('picker.unreadableFixData') }}</li>
+        <li v-if="store.readCapability === false">{{ t('picker.unreadableFixNoCaps') }}</li>
+      </ul>
+      <ul v-else-if="store.mountIssue === 'volume' || store.mountIssue === 'not_mounted'" class="tips">
+        <li>{{ t('picker.mappingFixFolders') }}</li>
+        <li>{{ t('picker.mappingFixRecreate') }}</li>
+      </ul>
+
+      <pre v-if="showCommands" class="notice__code mono">{{ store.mountHint }}</pre>
+
+      <div class="notice__actions">
+        <button type="button" class="btn btn--ghost btn--sm" :disabled="store.loading" @click="refreshState()">
+          {{ t('common.checkAgain') }}
+        </button>
+        <span class="faint">
+          {{ t('picker.noticeFooterBefore') }}<span class="mono">{{ primaryRoot }}</span>{{ t('picker.noticeFooterAfter') }}
+        </span>
+      </div>
+    </section>
+
+    <section v-if="store.recentCourses.length" class="card">
+      <div class="section-title">{{ t('picker.recentTitle') }}</div>
+      <p class="card__hint">{{ t('picker.recentHint') }}</p>
       <div class="recent">
         <div v-for="recent in store.recentCourses" :key="recent.path" class="recent__row">
           <span class="recent__icon" aria-hidden="true">📚</span>
           <div class="recent__info">
             <span class="recent__name">{{ recent.name }}</span>
-            <span class="recent__path mono">{{ recent.path }}</span>
+            <span class="recent__path mono">{{ recent.display_path || recent.path }}</span>
           </div>
           <div
             v-if="recent.total_lessons"
             class="recent__progress"
-            :title="`${recent.completed_lessons || 0} of ${recent.total_lessons} lessons completed`"
+            :title="t('picker.recentProgressTitle', { completed: recent.completed_lessons || 0, total: recent.total_lessons })"
           >
             <span class="recent__track" aria-hidden="true">
               <span class="recent__fill" :style="{ width: percentOf(recent) + '%' }"></span>
@@ -86,12 +165,12 @@ function isFinished(recent) {
             </span>
           </div>
           <button type="button" class="btn btn--sm" :disabled="loading" @click="openRecent(recent.path)">
-            Open
+            {{ t('common.open') }}
           </button>
           <button
             type="button"
             class="icon-btn"
-            title="Remove from the list"
+            :title="t('common.remove')"
             @click="forget(recent.path)"
           >
             ✕
@@ -101,48 +180,75 @@ function isFinished(recent) {
     </section>
 
     <section class="card">
-      <div class="section-title">📂 Select a course</div>
-      <p class="card__hint">
-        Browse to the folder that contains your course and load it. Videos, audio, documents and
-        quizzes are detected automatically.
-      </p>
+      <div class="section-title">{{ t('picker.selectTitle') }}</div>
+      <p class="card__hint">{{ t('picker.selectHint') }}</p>
       <DirectoryBrowser />
       <div class="manual">
         <input
           v-model="manualPath"
           class="input"
           type="text"
-          placeholder="…or paste a folder path, e.g. D:\Courses\Python Tutorial"
+          :placeholder="t('picker.manualPlaceholder')"
           @keydown.enter="loadFromInput"
         />
-        <button type="button" class="btn" :disabled="loading" @click="loadFromInput">Load course</button>
+        <button type="button" class="btn" :disabled="loading" @click="loadFromInput">
+          {{ t('common.loadCourse') }}
+        </button>
       </div>
     </section>
 
     <section class="grid">
       <div class="card">
-        <div class="section-title">🚀 How to use</div>
+        <div class="section-title">{{ t('picker.howToTitle') }}</div>
         <ul class="tips">
-          <li><strong>Prepare your files</strong> in a folder structure (one folder per section works great).</li>
-          <li><strong>Browse</strong> to the course folder or paste its path above.</li>
-          <li><strong>Load it</strong> and start learning — progress is saved automatically.</li>
-          <li><strong>Come back anytime</strong>: courses are remembered and the last one reopens after a restart.</li>
-          <li><strong>Continuous playback</strong>: a finished video rolls into the next one and your speed carries over.</li>
+          <li>
+            <strong>{{ t('picker.howTo.prepareLabel') }}</strong>
+            {{ t('picker.howTo.prepareText') }}
+          </li>
+          <li>
+            <strong>{{ t('picker.howTo.browseLabel') }}</strong>
+            {{ t('picker.howTo.browseText') }}
+          </li>
+          <li>
+            <strong>{{ t('picker.howTo.loadLabel') }}</strong>
+            {{ t('picker.howTo.loadText') }}
+          </li>
+          <li>
+            <strong>{{ t('picker.howTo.comeBackLabel') }}</strong>
+            {{ t('picker.howTo.comeBackText') }}
+          </li>
+          <li>
+            <strong>{{ t('picker.howTo.autoplayLabel') }}</strong>
+            {{ t('picker.howTo.autoplayText') }}
+          </li>
         </ul>
       </div>
 
       <div class="card">
-        <div class="section-title">🗂️ Supported file types</div>
+        <div class="section-title">{{ t('picker.typesTitle') }}</div>
         <ul class="tips">
-          <li><strong>Video</strong> — .mp4, .mkv, .avi, .mov, .webm, .m4v, .flv, .wmv</li>
-          <li><strong>Audio</strong> — .mp3, .wav, .m4a, .aac, .ogg, .flac</li>
-          <li><strong>Documents</strong> — .txt, .md, .html, .pdf, .docx, .doc, .rtf</li>
-          <li><strong>Subtitles</strong> — .srt, .vtt, .ass, .sub, .sbv (converted to WebVTT on the fly)</li>
-          <li><strong>Quizzes</strong> — any document whose name contains “quiz”, “exam” or “test”</li>
+          <li>
+            <strong>{{ t('picker.types.videoLabel') }}</strong>
+            {{ t('picker.types.videoText') }}
+          </li>
+          <li>
+            <strong>{{ t('picker.types.audioLabel') }}</strong>
+            {{ t('picker.types.audioText') }}
+          </li>
+          <li>
+            <strong>{{ t('picker.types.docsLabel') }}</strong>
+            {{ t('picker.types.docsText') }}
+          </li>
+          <li>
+            <strong>{{ t('picker.types.subsLabel') }}</strong>
+            {{ t('picker.types.subsText') }}
+          </li>
+          <li>
+            <strong>{{ t('picker.types.quizLabel') }}</strong>
+            {{ t('picker.types.quizText') }}
+          </li>
         </ul>
-        <p class="faint" style="margin-top: 12px">
-          Keyboard shortcuts in a lesson: space play/pause, ← → skip 10 s, ↑ ↓ volume.
-        </p>
+        <p class="faint" style="margin-top: 12px">{{ t('picker.shortcuts') }}</p>
       </div>
     </section>
   </div>
@@ -239,6 +345,34 @@ function isFinished(recent) {
 
 .recent__percent--done {
   color: #6ee7b7;
+}
+
+/* "Nothing is mounted yet" notice -------------------------------------- */
+.card--notice {
+  border-color: rgba(251, 191, 36, 0.34);
+  background: linear-gradient(180deg, rgba(251, 191, 36, 0.07), rgba(8, 12, 22, 0.42));
+}
+
+.notice__code {
+  margin-top: 14px;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: rgba(2, 6, 23, 0.6);
+  color: var(--text-muted);
+  font-size: 0.78rem;
+  line-height: 1.55;
+  overflow-x: auto;
+  white-space: pre;
+}
+
+.notice__actions {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-top: 14px;
+  flex-wrap: wrap;
+  font-size: 0.86rem;
 }
 
 .manual {

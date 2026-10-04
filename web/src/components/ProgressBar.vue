@@ -1,5 +1,6 @@
 <script setup>
 import { computed } from 'vue'
+import { t } from '../i18n.js'
 
 const props = defineProps({
   percentage: { type: Number, default: 0 },
@@ -15,7 +16,7 @@ const label = computed(() => `${(props.percentage || 0).toFixed(1)}%`)
 <template>
   <div class="progress-block">
     <div v-if="!compact" class="progress-block__meta">
-      <span><strong>{{ completed }}</strong> / {{ total }} lessons completed</span>
+      <span><strong>{{ completed }}</strong> / {{ total }} {{ t('progress.lessonsCompleted') }}</span>
       <span class="progress-block__percent">{{ label }}</span>
     </div>
     <div class="progress">

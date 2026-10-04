@@ -1,17 +1,39 @@
 <script setup>
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { api } from '../api.js'
 import { loadCourse, store } from '../store.js'
+import { t } from '../i18n.js'
 import { useToast } from '../composables/useToast.js'
 
 const toast = useToast()
 
 const currentPath = ref('')
+const currentDisplay = ref('')
 const parentPath = ref(null)
 const directories = ref([])
+const rootsDisplay = ref([])
 const loading = ref(false)
 const loadingCourse = ref(false)
 const error = ref('')
+
+// Shortcuts back to the mounted folders, shown in the toolbar. The folder you
+// are currently in is skipped so the row never repeats the path next to it.
+const rootLinks = computed(() =>
+  store.roots
+    .map((path, index) => ({
+      path,
+      label: rootsDisplay.value[index] || store.rootsDisplay[index] || path
+    }))
+    .filter((root) => root.label !== (currentDisplay.value || currentPath.value))
+)
+
+// An empty listing means something different depending on the mapping state:
+// "nothing is mounted" and "mapped, but the folder is empty" must not read the
+// same, so the message follows what the server reported about the folder.
+const emptyText = computed(() => {
+  if (!store.needsMount) return t('browser.empty')
+  return store.mountIssue === 'empty' ? t('browser.emptyMapped') : t('browser.emptyNeedsMount')
+})
 
 async function navigate(path) {
   loading.value = true
@@ -19,7 +41,9 @@ async function navigate(path) {
   try {
     const payload = await api.browse(path || '')
     currentPath.value = payload.current_path
+    currentDisplay.value = payload.current_display_path || payload.current_path || ''
     parentPath.value = payload.parent_path
+    rootsDisplay.value = payload.roots_display || []
     directories.value = payload.directories || []
   } catch (cause) {
     error.value = cause.message
@@ -34,7 +58,7 @@ async function useAsCourse(path) {
   loadingCourse.value = true
   try {
     const payload = await loadCourse(path)
-    toast.success(`Loaded "${payload.course_name}"`)
+    toast.success(t('toast.loaded', { name: payload.course_name }))
   } catch (cause) {
     toast.error(cause.message)
   } finally {
@@ -54,32 +78,30 @@ onMounted(() => navigate(''))
         :disabled="!parentPath"
         @click="navigate(parentPath)"
       >
-        ↑ Up
+        {{ t('common.up') }}
       </button>
       <button type="button" class="btn btn--ghost btn--sm" @click="navigate(currentPath)">
-        ⟳ Refresh
+        {{ t('common.refresh') }}
       </button>
-      <span class="browser__path mono">{{ currentPath || 'Loading…' }}</span>
-    </div>
-
-    <div class="browser__roots" v-if="store.roots.length">
-      <span class="faint">Allowed roots</span>
-      <button
-        v-for="root in store.roots"
-        :key="root"
-        type="button"
-        class="browser__root mono"
-        @click="navigate(root)"
-      >
-        {{ root }}
-      </button>
+      <template v-for="root in rootLinks" :key="root.path">
+        <span class="browser__divider" aria-hidden="true"></span>
+        <button
+          type="button"
+          class="browser__root mono"
+          :title="t('common.goTo', { label: root.label })"
+          @click="navigate(root.path)"
+        >
+          {{ root.label }}
+        </button>
+      </template>
+      <span class="browser__path mono">{{ currentDisplay || currentPath || t('common.loading') }}</span>
     </div>
 
     <div class="browser__list">
-      <p v-if="loading" class="browser__state"><span class="spinner"></span> Listing folders…</p>
+      <p v-if="loading" class="browser__state"><span class="spinner"></span> {{ t('browser.listing') }}</p>
       <p v-else-if="error" class="browser__state browser__state--error">{{ error }}</p>
       <p v-else-if="!directories.length" class="browser__state">
-        No sub-folders here. Use this folder as the course, or go up one level.
+        {{ emptyText }}
       </p>
       <template v-else>
         <div
@@ -92,8 +114,8 @@ onMounted(() => navigate(''))
             <span aria-hidden="true">📁</span>
             <span class="dir__name">{{ directory.name }}</span>
           </button>
-          <span v-if="directory.media_files" class="badge">{{ directory.media_files }} media</span>
-          <span v-else-if="directory.is_course_candidate" class="badge badge--success">course</span>
+          <span v-if="directory.media_files" class="badge">{{ t('browser.mediaCount', { count: directory.media_files }) }}</span>
+          <span v-else-if="directory.is_course_candidate" class="badge badge--success">{{ t('browser.courseBadge') }}</span>
           <button
             v-if="directory.is_course_candidate"
             type="button"
@@ -101,7 +123,7 @@ onMounted(() => navigate(''))
             :disabled="loadingCourse"
             @click="useAsCourse(directory.path)"
           >
-            Use as course
+            {{ t('browser.useAsCourse') }}
           </button>
         </div>
       </template>
@@ -114,9 +136,9 @@ onMounted(() => navigate(''))
         :disabled="!currentPath || loadingCourse"
         @click="useAsCourse(currentPath)"
       >
-        Use this folder as course
+        {{ t('browser.useCurrent') }}
       </button>
-      <span class="faint">Folders that contain videos or audio are highlighted and can be loaded directly.</span>
+      <span class="faint">{{ t('browser.actionsHint') }}</span>
     </div>
   </div>
 </template>
@@ -142,29 +164,25 @@ onMounted(() => navigate(''))
   color: var(--accent-3);
 }
 
-.browser__roots {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 10px 14px;
-  border-bottom: 1px solid var(--border);
-  flex-wrap: wrap;
-  font-size: 0.82rem;
+.browser__divider {
+  width: 1px;
+  height: 18px;
+  background: var(--border);
 }
 
 .browser__root {
-  border: 1px solid var(--border);
-  background: var(--surface-strong);
-  border-radius: 999px;
-  padding: 3px 12px;
+  background: none;
+  border: none;
+  padding: 0;
   cursor: pointer;
-  color: var(--text-muted);
-  transition: all var(--transition);
+  color: var(--accent-3);
+  font-size: 0.85rem;
+  transition: color var(--transition);
 }
 
 .browser__root:hover {
-  color: var(--text);
-  border-color: var(--border-strong);
+  color: var(--accent);
+  text-decoration: underline;
 }
 
 .browser__list {

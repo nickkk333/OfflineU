@@ -12,7 +12,18 @@ export const store = reactive({
   tree: null,
   stats: null,
   recentCourses: [],
-  roots: []
+  roots: [],
+  rootsDisplay: [],
+  needsMount: false,
+  // Why the picker is empty ("empty", "unreadable", "missing", "no_roots") plus
+  // the per-folder state, so the notice can name the real cause.
+  mountIssue: '',
+  rootsDetail: [],
+  mountHint: '',
+  // Whether the process may bypass file permission checks (CAP_DAC_OVERRIDE of
+  // /app/offlineu-cap): true/false inside a Linux container, null where the
+  // question cannot be answered at all (desktop build, no /proc).
+  readCapability: null
 })
 
 function applyState(payload) {
@@ -22,6 +33,13 @@ function applyState(payload) {
   store.stats = payload.stats || null
   store.recentCourses = payload.recent_courses || []
   store.roots = payload.roots || []
+  store.rootsDisplay = payload.roots_display || []
+  store.needsMount = Boolean(payload.needs_mount)
+  store.mountIssue = payload.mount_issue || ''
+  store.rootsDetail = payload.roots_detail || []
+  store.mountHint = payload.mount_hint || ''
+  // Only a plain false means "this container switched the capability off".
+  store.readCapability = payload.read_capability === undefined ? null : payload.read_capability
   store.loaded = true
 }
 

@@ -19,6 +19,9 @@ type RecentCourse struct {
 	// CompletedLessons is filled in on every /api/state call by reading the
 	// course progress file; it is never persisted.
 	CompletedLessons int `json:"completed_lessons,omitempty"`
+	// DisplayPath is the path as the UI should show it (relative to the mapped
+	// folder); it replaces Path in the browser and is never persisted.
+	DisplayPath string `json:"display_path,omitempty"`
 }
 
 type stateData struct {

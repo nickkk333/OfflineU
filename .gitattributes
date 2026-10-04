@@ -1,0 +1,14 @@
+# Line endings matter twice in this repository:
+#
+#  - a shell script with CRLF endings is unusable as a container entrypoint: the
+#    kernel looks for an interpreter called "/bin/sh\r" and fails with
+#    "no such file or directory", so docker/entrypoint.sh would break the image
+#    on every Windows checkout (core.autocrlf=true);
+#  - gofmt treats CRLF sources as unformatted (it rewrites them with LF), which
+#    makes "gofmt -l ." fail in CI for no real reason.
+#
+# The Dockerfile normalises entrypoint.sh a second time with
+# "sed -i 's/\r$//'" so the image also survives a source archive (ZIP download)
+# that ignored these attributes.
+*.sh text eol=lf
+*.go text eol=lf

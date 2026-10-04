@@ -2,7 +2,9 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import TypeIcon from '../components/TypeIcon.vue'
+import LanguageSwitch from '../components/LanguageSwitch.vue'
 import { api, formatTime, lessonRoute } from '../api.js'
+import { t, translateServerMessage } from '../i18n.js'
 import { useToast } from '../composables/useToast.js'
 
 const route = useRoute()
@@ -47,6 +49,15 @@ const isMedia = computed(() => Boolean(lesson.value && (lesson.value.video_file 
 const positionLabel = computed(() =>
   payload.value ? `${payload.value.position + 1} / ${payload.value.total}` : ''
 )
+// The lesson path as the user should see it: course root relative to the folder
+// they mapped in, so container paths never show up in the player header.
+const lessonLocation = computed(() => {
+  const relative = lesson.value?.rel_path || lesson.value?.path || ''
+  const course = payload.value?.course?.display_path || ''
+  return course && relative ? `${course}/${relative}` : relative
+})
+// The backend writes its warnings in English; this localises the known ones.
+const storageWarning = computed(() => translateServerMessage(payload.value?.storage_warning || ''))
 let warningShown = false
 
 let currentPath = ''
@@ -98,7 +109,7 @@ function autoplay(media) {
   const attempt = media.play()
   if (attempt && typeof attempt.catch === 'function') {
     attempt.catch(() => {
-      toast.error('Autoplay was blocked by the browser — press play to continue')
+      toast.error(t('toast.autoplayBlocked'))
     })
   }
 }
@@ -111,7 +122,7 @@ async function loadTextResources() {
       if (!response.ok) throw new Error(`HTTP ${response.status}`)
       textContents.value[resource.url] = await response.text()
     } catch (cause) {
-      textContents.value[resource.url] = `Could not load this file: ${cause.message}`
+      textContents.value[resource.url] = t('toast.couldNotLoadFile', { message: cause.message })
     }
   }
 }
@@ -130,7 +141,7 @@ async function save(seconds, completedFlag) {
 async function markCompleted() {
   if (completed.value) return
   completed.value = true
-  toast.success('Lesson marked as completed')
+  toast.success(t('toast.markedCompleted'))
   const media = mediaEl.value
   await save(media ? media.currentTime : 0, true)
 }
@@ -194,22 +205,22 @@ function onKeydown(event) {
     case 'ArrowRight':
       event.preventDefault()
       media.currentTime = Math.min(media.duration || Infinity, media.currentTime + 10)
-      toast.info('+10 s')
+      toast.info(t('toast.skipForward'))
       break
     case 'ArrowLeft':
       event.preventDefault()
       media.currentTime = Math.max(0, media.currentTime - 10)
-      toast.info('−10 s')
+      toast.info(t('toast.skipBack'))
       break
     case 'ArrowUp':
       event.preventDefault()
       media.volume = Math.min(1, media.volume + 0.1)
-      toast.info(`Volume ${Math.round(media.volume * 100)}%`)
+      toast.info(t('toast.volume', { percent: Math.round(media.volume * 100) }))
       break
     case 'ArrowDown':
       event.preventDefault()
       media.volume = Math.max(0, media.volume - 0.1)
-      toast.info(`Volume ${Math.round(media.volume * 100)}%`)
+      toast.info(t('toast.volume', { percent: Math.round(media.volume * 100) }))
       break
     default:
   }
@@ -239,23 +250,24 @@ onBeforeUnmount(() => {
   <div class="shell lesson-view">
     <div v-if="loading" class="card empty-state">
       <div class="empty-state__icon"><span class="spinner"></span></div>
-      Loading lesson…
+      {{ t('lesson.loading') }}
     </div>
 
     <div v-else-if="error" class="card empty-state">
       <div class="empty-state__icon">⚠️</div>
       <p>{{ error }}</p>
       <RouterLink class="btn btn--ghost" style="margin-top: 14px" to="/">
-        Back to the dashboard
+        {{ t('common.backToDashboard') }}
       </RouterLink>
     </div>
 
     <template v-else-if="lesson">
       <header class="lesson-view__bar">
-        <RouterLink class="btn btn--ghost btn--sm" to="/">← Back to course</RouterLink>
+        <RouterLink class="btn btn--ghost btn--sm" to="/">{{ t('common.backToCourse') }}</RouterLink>
         <TypeIcon :type="lesson.lesson_type" />
         <span class="spacer"></span>
         <span class="badge">{{ positionLabel }}</span>
+        <LanguageSwitch />
         <button
           type="button"
           class="btn btn--sm"
@@ -263,29 +275,29 @@ onBeforeUnmount(() => {
           :disabled="completed"
           @click="markCompleted"
         >
-          {{ completed ? 'Completed ✓' : 'Mark as completed' }}
+          {{ completed ? t('lesson.completed') : t('lesson.markCompleted') }}
         </button>
       </header>
 
       <section class="card lesson-view__head">
         <h1>{{ lesson.title }}</h1>
         <div class="lesson-view__meta">
-          <span class="mono faint">{{ lesson.path }}</span>
+          <span class="mono faint">{{ lessonLocation }}</span>
           <span v-if="lesson.progress_seconds > 0" class="badge">
-            {{ completed ? 'Watched' : 'Resume at' }} {{ formatTime(lesson.progress_seconds) }}
+            {{ completed ? t('lesson.watched') : t('lesson.resumeAt') }} {{ formatTime(lesson.progress_seconds) }}
           </span>
         </div>
       </section>
 
       <div v-if="payload.storage_warning" class="banner banner--danger">
-        <strong>Progress could not be saved.</strong>
-        <span>{{ payload.storage_warning }}</span>
+        <strong>{{ t('lesson.progressWarning') }}</strong>
+        <span>{{ storageWarning }}</span>
       </div>
 
       <section v-if="isMedia" class="card lesson-view__player">
         <div class="player-toolbar">
           <label class="toolbar-field">
-            <span class="faint">Speed</span>
+            <span class="faint">{{ t('lesson.speed') }}</span>
             <select
               class="input input--select"
               :value="playbackRate"
@@ -296,12 +308,12 @@ onBeforeUnmount(() => {
           </label>
           <label class="toolbar-check">
             <input type="checkbox" :checked="autoplayEnabled" @change="toggleAutoplay" />
-            Autoplay next lesson
+            {{ t('lesson.autoplayNext') }}
           </label>
           <span v-if="payload.autoplay_title" class="faint">
-            Up next: <strong>{{ payload.autoplay_title }}</strong>
+            {{ t('lesson.upNext') }} <strong>{{ payload.autoplay_title }}</strong>
           </span>
-          <span v-else class="faint">This is the last lesson of the course</span>
+          <span v-else class="faint">{{ t('lesson.lastLesson') }}</span>
         </div>
 
         <video
@@ -322,7 +334,7 @@ onBeforeUnmount(() => {
             kind="subtitles"
             :src="lesson.subtitle_src"
             srclang="en"
-            label="Subtitles"
+            :label="t('lesson.subtitles')"
             default
           />
         </video>
@@ -344,14 +356,14 @@ onBeforeUnmount(() => {
             kind="subtitles"
             :src="lesson.subtitle_src"
             srclang="en"
-            label="Subtitles"
+            :label="t('lesson.subtitles')"
             default
           />
         </audio>
       </section>
 
       <section v-if="resources.length" class="card stack">
-        <div class="section-title">📄 Content</div>
+        <div class="section-title">{{ t('lesson.contentTitle') }}</div>
         <div v-for="resource in resources" :key="resource.url" class="resource">
           <h4 class="resource__name">{{ resource.name }}</h4>
           <iframe
@@ -360,30 +372,27 @@ onBeforeUnmount(() => {
             :src="resource.src"
             :title="resource.name"
           ></iframe>
-          <pre v-else-if="resource.mode === 'text'" class="resource__text">{{ textContents[resource.url] ?? 'Loading…' }}</pre>
-          <p v-else class="faint">
-            This file type cannot be previewed in the browser. Use the link below to open it with the
-            matching desktop application.
-          </p>
+          <pre v-else-if="resource.mode === 'text'" class="resource__text">{{ textContents[resource.url] ?? t('lesson.loadingResource') }}</pre>
+          <p v-else class="faint">{{ t('lesson.cannotPreview') }}</p>
           <a class="resource__link" :href="resource.src" target="_blank" rel="noopener">
-            📎 Open {{ resource.name }} in a new tab
+            {{ t('lesson.openInNewTab', { name: resource.name }) }}
           </a>
         </div>
       </section>
 
       <footer class="lesson-view__nav">
         <RouterLink v-if="payload.prev_url" class="btn btn--ghost" :to="lessonRoute(payload.prev_url)">
-          ← Previous
+          {{ t('common.previous') }}
         </RouterLink>
-        <button v-else type="button" class="btn btn--ghost" disabled>← Previous</button>
+        <button v-else type="button" class="btn btn--ghost" disabled>{{ t('common.previous') }}</button>
         <span class="spacer"></span>
         <RouterLink v-if="payload.next_url" class="btn" :to="lessonRoute(payload.next_url)">
-          Next →
+          {{ t('common.next') }}
         </RouterLink>
-        <button v-else type="button" class="btn" disabled>Next →</button>
+        <button v-else type="button" class="btn" disabled>{{ t('common.next') }}</button>
       </footer>
 
-      <p class="faint shortcuts">Shortcuts: space play/pause · ← → skip 10 s · ↑ ↓ volume</p>
+      <p class="faint shortcuts">{{ t('lesson.shortcuts') }}</p>
     </template>
   </div>
 </template>

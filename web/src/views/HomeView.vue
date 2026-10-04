@@ -1,8 +1,10 @@
 <script setup>
 import { onMounted } from 'vue'
 import { refreshState, store } from '../store.js'
+import { t } from '../i18n.js'
 import CoursePicker from './CoursePicker.vue'
 import DashboardView from './DashboardView.vue'
+import LanguageSwitch from '../components/LanguageSwitch.vue'
 
 onMounted(() => {
   if (!store.loaded) refreshState()
@@ -15,22 +17,23 @@ onMounted(() => {
       <div class="brand__logo" aria-hidden="true">◈</div>
       <div>
         <h1 class="brand__name">OfflineU</h1>
-        <p class="faint">Self-hosted offline course viewer &amp; progress tracker</p>
+        <p class="faint">{{ t('app.tagline') }}</p>
       </div>
       <span class="spacer"></span>
       <span v-if="store.version" class="badge">v{{ store.version }}</span>
+      <LanguageSwitch />
     </header>
 
     <div v-if="!store.loaded" class="card empty-state">
       <div class="empty-state__icon"><span class="spinner"></span></div>
-      Loading your library…
+      {{ t('home.loadingLibrary') }}
     </div>
 
     <div v-else-if="store.error" class="card empty-state">
       <div class="empty-state__icon">⚠️</div>
       <p>{{ store.error }}</p>
       <button type="button" class="btn btn--ghost" style="margin-top: 14px" @click="refreshState()">
-        Try again
+        {{ t('common.tryAgain') }}
       </button>
     </div>
 

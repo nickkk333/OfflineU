@@ -107,6 +107,15 @@ func writeError(w http.ResponseWriter, status int, message string) {
 	writeJSON(w, status, map[string]string{"error": message})
 }
 
+// requestLanguage reports which UI language the caller asked for. Only the few
+// strings generated on the server (currently the mount hint) follow it.
+func requestLanguage(r *http.Request) string {
+	if strings.HasPrefix(strings.ToLower(r.Header.Get("Accept-Language")), "zh") {
+		return "zh"
+	}
+	return "en"
+}
+
 func requireMethod(w http.ResponseWriter, r *http.Request, method string) bool {
 	if r.Method == method {
 		return true
@@ -145,7 +154,19 @@ func (a *App) handleHealth(w http.ResponseWriter, r *http.Request) {
 type courseSummary struct {
 	Name         string `json:"name"`
 	Path         string `json:"path"`
+	DisplayPath  string `json:"display_path,omitempty"`
 	ProgressFile string `json:"progress_file"`
+}
+
+// summaryFor describes a course for the API, using the mapped-folder relative
+// path for everything the UI prints.
+func (a *App) summaryFor(course *Course) courseSummary {
+	return courseSummary{
+		Name:         course.Name,
+		Path:         course.Path,
+		DisplayPath:  a.Config.DisplayPath(course.Path),
+		ProgressFile: course.ProgressFile,
+	}
 }
 
 // handleState is the single call the SPA uses to render the home page: it
@@ -161,12 +182,18 @@ func (a *App) handleState(w http.ResponseWriter, r *http.Request) {
 	course := a.ActiveCourse()
 	if course == nil {
 		writeJSON(w, http.StatusOK, map[string]any{
-			"version":        Version,
-			"roots":          roots,
-			"course":         nil,
-			"tree":           nil,
-			"stats":          Stats{},
-			"recent_courses": a.recentCoursesWithProgress(),
+			"version":         Version,
+			"roots":           roots,
+			"course":          nil,
+			"tree":            nil,
+			"stats":           Stats{},
+			"recent_courses":  a.recentCoursesWithProgress(),
+			"roots_display":   a.Config.RootDisplays(),
+			"needs_mount":     a.Config.NeedsMount(),
+			"read_capability": readCapabilityValue(),
+			"mount_issue":     string(a.Config.MountIssue()),
+			"roots_detail":    a.Config.RootStatuses(),
+			"mount_hint":      MountHintFor(requestLanguage(r)),
 		})
 		return
 	}
@@ -174,17 +201,30 @@ func (a *App) handleState(w http.ResponseWriter, r *http.Request) {
 	a.Progress.ApplyToTree(course)
 	AttachNodeStats(course.Root)
 	writeJSON(w, http.StatusOK, map[string]any{
-		"version": Version,
-		"roots":   roots,
-		"course": courseSummary{
-			Name:         course.Name,
-			Path:         course.Path,
-			ProgressFile: course.ProgressFile,
-		},
-		"tree":           course.Root,
-		"stats":          a.Progress.Stats(course),
-		"recent_courses": []RecentCourse{},
+		"version":         Version,
+		"roots":           roots,
+		"course":          a.summaryFor(course),
+		"tree":            course.Root,
+		"stats":           a.Progress.Stats(course),
+		"recent_courses":  []RecentCourse{},
+		"roots_display":   a.Config.RootDisplays(),
+		"needs_mount":     false,
+		"read_capability": readCapabilityValue(),
+		"mount_issue":     string(a.Config.MountIssue()),
+		"roots_detail":    a.Config.RootStatuses(),
+		"mount_hint":      MountHintFor(requestLanguage(r)),
 	})
+}
+
+// readCapabilityValue renders ReadCapability() for /api/state: true/false inside
+// a Linux container and null where the question cannot be answered at all (no
+// /proc). The frontend only explains the capability when it gets a plain false,
+// so a desktop build never accuses the container of having dropped it.
+func readCapabilityValue() any {
+	if readable, known := ReadCapability(); known {
+		return readable
+	}
+	return nil
 }
 
 // recentCoursesWithProgress lists the remembered courses and adds how far each
@@ -200,6 +240,7 @@ func (a *App) recentCoursesWithProgress() []RecentCourse {
 	courses := a.Store.RecentCourses()
 	for index := range courses {
 		entry := &courses[index]
+		entry.DisplayPath = a.Config.DisplayPath(entry.Path)
 		entry.CompletedLessons = CountCompleted(a.Config.ProgressFileFor(entry.Path))
 		if entry.TotalLessons == 0 {
 			if parsed, err := a.Config.ScanCourse(entry.Path); err == nil {
@@ -217,15 +258,19 @@ func (a *App) recentCoursesWithProgress() []RecentCourse {
 type browseEntry struct {
 	Name              string `json:"name"`
 	Path              string `json:"path"`
+	DisplayPath       string `json:"display_path,omitempty"`
 	MediaFiles        int    `json:"media_files"`
 	IsCourseCandidate bool   `json:"is_course_candidate"`
 }
 
 type browsePayload struct {
-	CurrentPath string        `json:"current_path"`
-	ParentPath  *string       `json:"parent_path"`
-	Directories []browseEntry `json:"directories"`
-	Roots       []string      `json:"roots"`
+	CurrentPath    string        `json:"current_path"`
+	CurrentDisplay string        `json:"current_display_path,omitempty"`
+	ParentPath     *string       `json:"parent_path"`
+	ParentDisplay  string        `json:"parent_display_path,omitempty"`
+	Directories    []browseEntry `json:"directories"`
+	Roots          []string      `json:"roots"`
+	RootsDisplay   []string      `json:"roots_display,omitempty"`
 }
 
 // handleBrowse is the JSON directory browser used by the course picker.
@@ -287,34 +332,42 @@ func (a *App) writeBrowse(w http.ResponseWriter, current string, roots []string)
 			continue
 		}
 		full := filepath.Join(current, entry.Name())
+		display := a.Config.DisplayPath(full)
 		media, err := countMediaFiles(full, MaxMediaScanEntries)
 		if err != nil {
 			directories = append(directories, browseEntry{
-				Name: entry.Name() + " (access denied)",
-				Path: full,
+				Name:        entry.Name() + " (access denied)",
+				Path:        full,
+				DisplayPath: display,
 			})
 			continue
 		}
 		directories = append(directories, browseEntry{
 			Name:              entry.Name(),
 			Path:              full,
+			DisplayPath:       display,
 			MediaFiles:        media,
 			IsCourseCandidate: media > 0,
 		})
 	}
 
 	var parent *string
+	parentDisplay := ""
 	parentPath := filepath.Dir(current)
 	if filepath.Clean(parentPath) != filepath.Clean(current) && a.Config.InsideRoots(parentPath) {
 		value := parentPath
 		parent = &value
+		parentDisplay = a.Config.DisplayPath(parentPath)
 	}
 
 	writeJSON(w, http.StatusOK, browsePayload{
-		CurrentPath: current,
-		ParentPath:  parent,
-		Directories: directories,
-		Roots:       roots,
+		CurrentPath:    current,
+		CurrentDisplay: a.Config.DisplayPath(current),
+		ParentPath:     parent,
+		ParentDisplay:  parentDisplay,
+		Directories:    directories,
+		Roots:          roots,
+		RootsDisplay:   a.Config.RootDisplays(),
 	})
 }
 
@@ -368,11 +421,7 @@ func (a *App) handleLoadCourse(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"success":     true,
 		"course_name": course.Name,
-		"course": courseSummary{
-			Name:         course.Name,
-			Path:         course.Path,
-			ProgressFile: course.ProgressFile,
-		},
+		"course":      a.summaryFor(course),
 	})
 }
 
@@ -423,11 +472,7 @@ func (a *App) handleLessonAPI(w http.ResponseWriter, r *http.Request) {
 	}
 
 	payload := lessonPayload{
-		Course: courseSummary{
-			Name:         course.Name,
-			Path:         course.Path,
-			ProgressFile: course.ProgressFile,
-		},
+		Course:            a.summaryFor(course),
 		Lesson:            lesson,
 		Resources:         BuildTextResources(lesson),
 		RequestedAutoplay: r.URL.Query().Get("autoplay") == "1",
