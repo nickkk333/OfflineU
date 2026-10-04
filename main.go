@@ -252,5 +252,8 @@ func printUsage(flags *flag.FlagSet) {
 		"  OFFLINEU_ROOTS          path-list separated allow-list of folders OfflineU may browse and serve\n"+
 		"  OFFLINEU_ROOTS_LABEL    friendly name shown in the UI instead of the mounted folder path\n"+
 		"  OFFLINEU_PROGRESS_DIR   store progress files and the course list in this folder\n"+
+		"  OFFLINEU_DLNA           set to off to hide casting (DLNA/UPnP) entirely\n"+
+		"  OFFLINEU_FFMPEG         path of ffmpeg (casting converts a file a device would refuse)\n"+
+		"  OFFLINEU_FFPROBE        path of ffprobe (defaults to the one next to ffmpeg)\n"+
 		"  AUTO_LOAD_COURSE        load this course at startup when no path is given\n")
 }

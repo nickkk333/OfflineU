@@ -27,6 +27,9 @@ dependencies.
   Office files get an "open in new tab" link.
 * 💬 **Subtitles** — `.srt`/`.vtt` files next to a video are attached to it and converted to
   WebVTT on the fly, so the browser can actually display them.
+* 📺 **Cast to DLNA/UPnP devices** — the lesson view lists the TVs, speakers and players on your
+  LAN and pushes the current video or audio to the one you pick (resuming at your saved position).
+  Pure standard library: SSDP discovery plus the `SetAVTransportURI`/`Play` SOAP actions.
 * ✅ **Lesson progress tracking** — time spent and completion are stored automatically and are
   never lost by revisiting a lesson.
 * ♻️ **Continue where you left off** — a resume card on the dashboard jumps straight back to
@@ -155,11 +158,82 @@ stays scriptable:
 | POST   | `/api/reset_course`                     | Back to the picker; the course stays in the recent list         |
 | POST   | `/api/forget_course`                    | `{"path": "..."}` — remove one entry from the recent list       |
 | GET    | `/reset_course`, `/forget_course`       | Legacy redirect variants of the two endpoints above             |
+| GET    | `/api/dlna/devices`                     | Renderers found on the LAN (`?refresh=1` repeats the SSDP search) |
+| POST   | `/api/dlna/cast`                        | `{"device": "<udn>", "lesson_path": "...", "start_seconds": 30, "transcode": "auto"\|"on"\|"off"}` — push a lesson to a renderer; `converted` in the answer says whether a stream was used |
+| GET    | `/api/dlna/stream?lesson=<path>&start=30` | The converted stream (MPEG-TS / AAC) a renderer pulls while playing |
+| POST   | `/api/dlna/control`                     | `{"device": "<udn>", "action": "play"\|"pause"\|"stop"}`          |
+
+`/api/state` and `/api/lesson` carry `dlna_enabled`, so the UI hides the cast button when
+`OFFLINEU_DLNA=off`. `OFFLINEU_DLNA=off` makes the three DLNA endpoints answer `403`.
 
 `/api/browse` and `/api/load_course` are accepted as aliases of the two picker endpoints.
 
 `GET /api/state` localises its `mount_hint` from the `Accept-Language` header (`zh*` → Chinese,
 anything else → English), so the SPA can switch languages without a server restart.
+
+---
+
+## 📺 Casting (DLNA / UPnP)
+
+The **📺 Cast** button of a lesson lists the media renderers on your LAN and plays the lesson's
+video or audio on the one you pick. No app on the TV, no account, no cloud service:
+
+1. OfflineU broadcasts an **SSDP `M-SEARCH`** (`MediaRenderer:1` and `ssdp:all`) and listens ~2 s.
+2. Every device that answers is asked for its **device description**; the ones exposing an
+   `AVTransport` service become cast targets.
+3. Choosing one sends **`SetAVTransportURI`** (the absolute `http://<your-host>:5000/files/…` URL
+   plus DIDL-Lite metadata) followed by **`Play`** — and a `Seek` when the lesson has a saved
+   position, so the TV continues where the browser stopped.
+4. **Pause / Play / Stop** stay available in the same menu while the device is playing.
+
+What it needs:
+
+* **A LAN-reachable address.** The renderer downloads the file itself, so OfflineU builds the URL
+  from the host the browser used (`X-Forwarded-Host`/`Proto` are honoured). Opening OfflineU on
+  `http://localhost:5000` from the machine it runs on is fine; a TV cannot reach that host name,
+  so open the LAN address (e.g. `http://192.168.1.5:5000`) or set `--host 0.0.0.0`.
+* **Multicast on the same network.** In Docker the SSDP search only reaches the LAN with host
+  networking (or macvlan); add `network_mode: host` to the service, or run OfflineU directly on
+  the machine. Without it the cast menu simply stays empty.
+* **A format the device understands** — see below, OfflineU converts what it has to.
+
+#### “My TV refuses this file” — compatibility mode
+
+Most renderers reject a *container* (`.mkv`, `.avi`, `.flv`, `.wmv`, `.webm`) even though they
+decode the streams inside it. OfflineU therefore decides per lesson whether the device is likely
+to refuse it and, if so, hands the device a **stream instead of the file** — `/api/dlna/stream`,
+produced by ffmpeg while the device is already playing:
+
+| Situation | What OfflineU does | Cost |
+| --------- | ------------------ | ---- |
+| `.mp4`/`.m4v`/`.mov` with H.264 + AAC/MP3/AC3 | hands over the file unchanged | none |
+| `.mkv`/`.avi`/… whose codecs are fine | **repackages** into MPEG-TS (`-c copy`) | a few % of one core |
+| HEVC/VP9, DTS, WMA, … (codec the device cannot decode) | **re-encodes** to H.264 + AAC | real CPU, but it plays |
+| audio lesson (`.flac`, `.wav`, `.ogg`, …) | re-encodes to AAC (mp3 stays mp3) | small |
+
+Because the conversion happens while streaming, the resume position is given to ffmpeg as `-ss`
+(the device cannot seek in a live stream), subtitles and attachments are dropped, and the process
+dies the moment the device stops or disconnects.
+
+ffmpeg is an **optional helper, not a dependency** — without it OfflineU keeps casting the
+original file, exactly as before, and the cast menu says so when a lesson would need converting:
+
+* local run: install ffmpeg, or point `OFFLINEU_FFMPEG` / `OFFLINEU_FFPROBE` at it;
+* Docker: the image already contains ffmpeg. To build one without it (~90 MB smaller, casting
+  then hands over the original file):
+  ```bash
+  docker build --build-arg INSTALL_FFMPEG=false -t offlineu .
+  ```
+  (`docker-compose.yml`: `build: { args: { INSTALL_FFMPEG: "false" } }`.)
+
+**Compatibility mode** in the cast menu is pre-set to what the server worked out for the lesson
+(`/api/lesson` returns `cast_plan: {needs_transcode, transcode_available, reason}`) and can be
+toggled by hand: switch it off to push the untouched file (no CPU at all), switch it on to force a
+conversion when a device is pickier than OfflineU assumed.
+
+Casting can be switched off entirely: `OFFLINEU_DLNA=off` hides the button and makes
+`/api/dlna/*` answer `403`. The discovery result is cached for 30 s; **⟳ Search again** repeats
+the search immediately.
 
 ---
 
@@ -176,6 +250,8 @@ OfflineU/
 │   ├── progress.go             # progress file loading/saving, watched-time rules
 │   ├── store.go                # active course + recent courses (offlineu_state.json)
 │   ├── subtitles.go            # SRT → WebVTT conversion (CP1252 fallback)
+│   ├── dlna.go                 # SSDP discovery, device description, SOAP casting
+│   ├── transcode.go            # optional ffmpeg: probe, repackage/re-encode, live stream
 │   ├── server.go               # routes, JSON API, static + SPA fallback
 │   └── *_test.go               # Go test suite
 └── web/                        # Vue 3 + Vite frontend (built into web/dist and embedded)
@@ -216,7 +292,8 @@ go test ./... -count=1
 
 It covers folder parsing, subtitle attachment, document modes, autoplay selection, progress
 persistence (including the "revisiting a lesson must not reset it" regression), path-traversal
-protection, the `OFFLINEU_ROOTS` allow-list, the JSON API, the course store and the CLI.
+protection, the `OFFLINEU_ROOTS` allow-list, the JSON API, the course store, the CLI and the DLNA
+layer (device description parsing, the SOAP requests a cast produces, UPnP error reporting).
 
 Useful companions:
 
@@ -261,6 +338,10 @@ services:
 ```bash
 docker compose up -d          # or: docker build -t offlineu . && docker run ...
 ```
+
+Casting needs the SSDP multicast of your LAN, which Docker's default bridge network does not
+forward: add `network_mode: host` to the service (and drop the `ports` mapping, the container then
+uses the host network directly) if you want the 📺 Cast button to find your TV.
 
 ### Offline install — export a `docker load`-able tar
 
@@ -508,6 +589,7 @@ OfflineU is designed for a trusted LAN or a single machine:
 * [x] Self hosted Docker deployment
 * [x] Directory browser, subtitle support, keyboard shortcuts
 * [x] Go rewrite with an embedded Vue 3 frontend
+* [x] Cast lessons to DLNA/UPnP devices on the LAN (incl. on-the-fly conversion)
 * [ ] Multi-user profile support
 * [ ] Dark/light theme switcher
 * [ ] Built-in quiz interactivity
@@ -562,6 +644,9 @@ Environment variables:
 | `OFFLINEU_ROOTS`        | Path-list (`;` on Windows, `:` elsewhere) of folders OfflineU may browse and serve. **Strongly recommended.** |
 | `OFFLINEU_ROOTS_LABEL`  | Name shown in the UI for the first top-level folder instead of its real name (e.g. `Movie Night`) |
 | `OFFLINEU_PROGRESS_DIR` | Store progress files *and* the course list here instead of next to the course |
+| `OFFLINEU_DLNA`         | `off` (or `0`/`false`) hides casting and refuses the `/api/dlna/*` endpoints; anything else leaves it on |
+| `OFFLINEU_FFMPEG`       | Path of ffmpeg — lets casting convert a file a device would refuse (`.mkv`, HEVC, …). Falls back to `ffmpeg` on `PATH` |
+| `OFFLINEU_FFPROBE`      | Path of ffprobe; defaults to the binary next to `OFFLINEU_FFMPEG` |
 | `AUTO_LOAD_COURSE`      | Load this course at startup when no path argument is given                  |
 
 Locations inside a configured root are shown **relative to the folder you mapped in**

@@ -176,6 +176,24 @@ const en = {
     openInNewTab: '📎 Open {name} in a new tab',
     shortcuts: 'Shortcuts: space play/pause · ← → skip 10 s · ↑ ↓ volume'
   },
+  cast: {
+    button: '📺 Cast',
+    title: 'Cast to a device',
+    refresh: '⟳ Search again',
+    scanning: 'Searching the network…',
+    empty:
+      'No cast device answered. Switch your TV, speaker or player on and make sure it sits on the same network as OfflineU — in Docker the container needs network_mode: host to see it.',
+    casting: 'Playing on {name}',
+    compatMode: 'Compatibility mode',
+    compatHint:
+      'Repackages the file while it plays (MPEG-TS) — needed for .mkv, .avi and friends. Exotic codecs are re-encoded; switch it off to hand over the untouched file.',
+    noFfmpeg:
+      'This file may be refused by your device. Install ffmpeg (or point OFFLINEU_FFMPEG at it) and OfflineU converts it while casting.',
+    resumeFrom: 'Starts at {time} (the device takes over from there).',
+    stop: '⏹ Stop',
+    pause: '⏸ Pause',
+    resume: '▶ Play'
+  },
   toast: {
     loaded: 'Loaded "{name}"',
     enterPath: 'Please enter the path of a course folder.',
@@ -187,7 +205,10 @@ const en = {
     markedCompleted: 'Lesson marked as completed',
     skipForward: 'Fast-forward 10 s',
     skipBack: 'Rewind 10 s',
-    volume: 'Volume {percent}%'
+    volume: 'Volume {percent}%',
+    castStarted: 'Casting “{title}” to {device}',
+    castConverted: 'Converting “{title}” for {device} while it plays',
+    castStopped: 'Stopped playback on {device}'
   }
 }
 
@@ -351,6 +372,24 @@ const zh = {
     openInNewTab: '📎 在新标签页打开 {name}',
     shortcuts: '快捷键：空格 播放/暂停 · ← → 快退/快进 10 秒 · ↑ ↓ 调节音量'
   },
+  cast: {
+    button: '📺 投屏',
+    title: '投屏到设备',
+    refresh: '⟳ 重新搜索',
+    scanning: '正在搜索局域网设备…',
+    empty:
+      '没有设备响应。请打开电视、音箱或播放器，并确认它与 OfflineU 在同一个网络里 —— Docker 部署时容器需要 network_mode: host 才能发现设备。',
+    casting: '正在 {name} 上播放',
+    compatMode: '兼容模式',
+    compatHint:
+      '播放时实时重新封装为 MPEG-TS —— .mkv、.avi 等格式需要它；编码不被支持时会自动转码。取消勾选则直接推送原始文件。',
+    noFfmpeg:
+      '设备可能会拒绝这个文件。安装 ffmpeg（或用 OFFLINEU_FFMPEG 指定路径）后，OfflineU 会在投屏时自动转换。',
+    resumeFrom: '从 {time} 开始（设备会接着这个位置播放）。',
+    stop: '⏹ 停止',
+    pause: '⏸ 暂停',
+    resume: '▶ 继续'
+  },
   toast: {
     loaded: '已加载 “{name}”',
     enterPath: '请输入课程文件夹的路径。',
@@ -362,7 +401,10 @@ const zh = {
     markedCompleted: '已标记为完成',
     skipForward: '快进 10 秒',
     skipBack: '后退 10 秒',
-    volume: '音量 {percent}%'
+    volume: '音量 {percent}%',
+    castStarted: '正在把 “{title}” 投屏到 {device}',
+    castConverted: '正在边转码边把 “{title}” 播放到 {device}',
+    castStopped: '已在 {device} 上停止播放'
   }
 }
 
@@ -437,7 +479,18 @@ const SERVER_MESSAGES_ZH = [
   [/^lesson_path is required$/, '缺少 lesson_path 参数'],
   [/^path is required$/, '缺少 path 参数'],
   [/^cannot determine the home directory$/, '无法确定用户主目录'],
-  [/^method not allowed$/, '该请求方法不被允许']
+  [/^method not allowed$/, '该请求方法不被允许'],
+  [/^dlna is disabled$/, '投屏功能已关闭'],
+  [/^this lesson has no media to cast$/, '这一节没有可投屏的视频或音频'],
+  [/^this lesson has no media to stream$/, '这一节没有可播放的视频或音频'],
+  [/^ffmpeg is not installed, so this (lesson|file) cannot be converted$/, '未安装 ffmpeg，$1 无法转换'],
+  [/^the cast device was not found on the network$/, '局域网里找不到这个投屏设备'],
+  [/^action must be play, pause or stop$/, '操作只能是 play、pause 或 stop'],
+  [/^device and lesson_path are required$/, '缺少 device 或 lesson_path 参数'],
+  [/^device and action are required$/, '缺少 device 或 action 参数'],
+  [/^([\s\S]+) did not accept the media: ([\s\S]+)$/, '$1 不接受这个媒体文件：$2'],
+  [/^([\s\S]+) did not start playing: ([\s\S]+)$/, '$1 没有开始播放：$2'],
+  [/^([\s\S]+) did not answer ([\s\S]+): ([\s\S]+)$/, '$1 没有响应 $2：$3']
 ]
 
 export function translateServerMessage(message) {

@@ -24,6 +24,7 @@ const (
 	EnvRootLabel   = "OFFLINEU_ROOTS_LABEL"
 	EnvProgressDir = "OFFLINEU_PROGRESS_DIR"
 	EnvAutoCourse  = "AUTO_LOAD_COURSE"
+	EnvDLNA        = "OFFLINEU_DLNA"
 )
 
 // MountHint is printed at startup and shown in the picker when none of the
@@ -116,6 +117,7 @@ type Config struct {
 	RootLabel   string   // OFFLINEU_ROOTS_LABEL: friendly name shown instead of the root path
 	ProgressDir string   // OFFLINEU_PROGRESS_DIR ("" keeps progress next to the course)
 	StateDir    string   // where offlineu_state.json lives
+	DLNAEnabled bool     // OFFLINEU_DLNA: look for cast devices on the LAN (default: on)
 }
 
 // ConfigFromEnv builds a Config from the OFFLINEU_* environment variables.
@@ -125,6 +127,7 @@ func ConfigFromEnv() Config {
 		Port:        envIntOr(EnvPort, 5000),
 		RootLabel:   strings.TrimSpace(os.Getenv(EnvRootLabel)),
 		ProgressDir: strings.TrimSpace(os.Getenv(EnvProgressDir)),
+		DLNAEnabled: dlnaEnabled(),
 	}
 	cfg.RefreshRoots()
 	cfg.StateDir = deriveStateDir(cfg.ProgressDir)
@@ -580,6 +583,18 @@ func envOr(key, fallback string) string {
 		return value
 	}
 	return fallback
+}
+
+// dlnaEnabled reads OFFLINEU_DLNA. Casting is on unless it is switched off
+// explicitly: a Docker container without host networking cannot see the SSDP
+// multicast of the LAN, and its owner may prefer a quiet startup log.
+func dlnaEnabled() bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv(EnvDLNA))) {
+	case "0", "off", "false", "no", "disabled", "none":
+		return false
+	default:
+		return true
+	}
 }
 
 func envIntOr(key string, fallback int) int {

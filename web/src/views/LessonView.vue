@@ -3,6 +3,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import TypeIcon from '../components/TypeIcon.vue'
 import LanguageSwitch from '../components/LanguageSwitch.vue'
+import CastMenu from '../components/CastMenu.vue'
 import { api, formatTime, lessonRoute } from '../api.js'
 import { t, translateServerMessage } from '../i18n.js'
 import { useToast } from '../composables/useToast.js'
@@ -314,6 +315,11 @@ onBeforeUnmount(() => {
             {{ t('lesson.upNext') }} <strong>{{ payload.autoplay_title }}</strong>
           </span>
           <span v-else class="faint">{{ t('lesson.lastLesson') }}</span>
+          <CastMenu
+            :lesson="lesson"
+            :enabled="payload.dlna_enabled !== false"
+            :plan="payload.cast_plan || {}"
+          />
         </div>
 
         <video

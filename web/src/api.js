@@ -45,7 +45,24 @@ export const api = {
       payload.progress_seconds = Math.floor(seconds)
     }
     return request('/api/progress', { method: 'POST', body: JSON.stringify(payload) })
-  }
+  },
+  // DLNA / UPnP casting: the server does the network search, the SPA only picks
+  // a device and asks the server to hand it the lesson's media URL.
+  castDevices: (refresh) => request(`/api/dlna/devices${refresh ? '?refresh=1' : ''}`),
+  // converted === true asks the server to repackage/re-encode the file on the
+  // fly (ffmpeg), which is what a TV needs for .mkv and friends.
+  castTo: (device, lessonPath, startSeconds, converted) =>
+    request('/api/dlna/cast', {
+      method: 'POST',
+      body: JSON.stringify({
+        device,
+        lesson_path: lessonPath,
+        start_seconds: Math.floor(startSeconds || 0),
+        transcode: converted ? 'on' : 'off'
+      })
+    }),
+  castControl: (device, action) =>
+    request('/api/dlna/control', { method: 'POST', body: JSON.stringify({ device, action }) })
 }
 
 // Builds the SPA route of a lesson ("Section 1/01 - Intro.mp4/Intro").

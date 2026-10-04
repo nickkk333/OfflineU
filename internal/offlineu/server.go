@@ -2,6 +2,7 @@ package offlineu
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -12,6 +13,7 @@ import (
 	"path"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -20,9 +22,11 @@ import (
 // http.Handler that serves the Vue single page app, the JSON API and course
 // files.
 type App struct {
-	Config   *Config
-	Store    *CourseStore
-	Progress *ProgressTracker
+	Config     *Config
+	Store      *CourseStore
+	Progress   *ProgressTracker
+	DLNA       *DLNAHub
+	Transcoder *Transcoder
 
 	web      fs.FS
 	index    []byte
@@ -32,7 +36,13 @@ type App struct {
 // NewApp builds an application from a configuration.
 func NewApp(cfg Config) *App {
 	store := NewCourseStore(&cfg)
-	return &App{Config: &cfg, Store: store, Progress: &ProgressTracker{}}
+	return &App{
+		Config:     &cfg,
+		Store:      store,
+		Progress:   &ProgressTracker{},
+		DLNA:       NewDLNAHub(),
+		Transcoder: NewTranscoder(),
+	}
 }
 
 // Handler attaches the built frontend (embedded or on disk) and returns the
@@ -72,6 +82,14 @@ func (a *App) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		a.handleResetCourseAPI(w, r)
 	case requestPath == "/api/forget_course":
 		a.handleForgetCourseAPI(w, r)
+	case requestPath == "/api/dlna/devices":
+		a.handleDLNADevices(w, r)
+	case requestPath == "/api/dlna/cast":
+		a.handleDLNACast(w, r)
+	case requestPath == "/api/dlna/stream":
+		a.handleDLNAStream(w, r)
+	case requestPath == "/api/dlna/control":
+		a.handleDLNAControl(w, r)
 	case requestPath == "/reset_course":
 		a.handleResetCourse(w, r)
 	case requestPath == "/forget_course":
@@ -194,6 +212,7 @@ func (a *App) handleState(w http.ResponseWriter, r *http.Request) {
 			"mount_issue":     string(a.Config.MountIssue()),
 			"roots_detail":    a.Config.RootStatuses(),
 			"mount_hint":      MountHintFor(requestLanguage(r)),
+			"dlna_enabled":    a.Config.DLNAEnabled,
 		})
 		return
 	}
@@ -213,6 +232,7 @@ func (a *App) handleState(w http.ResponseWriter, r *http.Request) {
 		"mount_issue":     string(a.Config.MountIssue()),
 		"roots_detail":    a.Config.RootStatuses(),
 		"mount_hint":      MountHintFor(requestLanguage(r)),
+		"dlna_enabled":    a.Config.DLNAEnabled,
 	})
 }
 
@@ -438,6 +458,8 @@ type lessonPayload struct {
 	Position          int            `json:"position"`
 	Total             int            `json:"total"`
 	StorageWarning    string         `json:"storage_warning,omitempty"`
+	DLNAEnabled       bool           `json:"dlna_enabled"`
+	CastPlan          CastPlan       `json:"cast_plan"`
 }
 
 // handleLessonAPI returns everything the lesson view needs: the lesson itself,
@@ -478,6 +500,8 @@ func (a *App) handleLessonAPI(w http.ResponseWriter, r *http.Request) {
 		RequestedAutoplay: r.URL.Query().Get("autoplay") == "1",
 		Position:          position,
 		Total:             len(lessons),
+		DLNAEnabled:       a.Config.DLNAEnabled,
+		CastPlan:          a.castPlanFor(r.Context(), course, lesson),
 	}
 	if position > 0 {
 		payload.PrevURL = lessons[position-1].URL
@@ -622,6 +646,318 @@ func (a *App) handleForgetCourseAPI(w http.ResponseWriter, r *http.Request) {
 	}
 	a.Store.Forget(payload.Path)
 	writeJSON(w, http.StatusOK, map[string]any{"success": true})
+}
+
+// handleDLNADevices lists the media renderers (TVs, speakers, …) that answered
+// the SSDP search. ?refresh=1 repeats the search instead of reading the cache.
+func (a *App) handleDLNADevices(w http.ResponseWriter, r *http.Request) {
+	if !requireMethod(w, r, http.MethodGet) {
+		return
+	}
+	if !a.Config.DLNAEnabled {
+		writeError(w, http.StatusForbidden, "dlna is disabled")
+		return
+	}
+	devices, err := a.DLNA.Devices(r.URL.Query().Get("refresh") == "1")
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"enabled": true,
+		"devices": devices,
+	})
+}
+
+// handleDLNACast hands the media file of a lesson to one renderer and starts
+// playback: the SetAVTransportURI and Play SOAP actions of its AVTransport.
+func (a *App) handleDLNACast(w http.ResponseWriter, r *http.Request) {
+	if !requireMethod(w, r, http.MethodPost) {
+		return
+	}
+	if !a.Config.DLNAEnabled {
+		writeError(w, http.StatusForbidden, "dlna is disabled")
+		return
+	}
+	course := a.ActiveCourse()
+	if course == nil {
+		writeError(w, http.StatusBadRequest, "no course loaded")
+		return
+	}
+	var payload struct {
+		Device       string `json:"device"`
+		LessonPath   string `json:"lesson_path"`
+		StartSeconds *int   `json:"start_seconds"`
+		Transcode    string `json:"transcode"` // "auto" (default), "on" or "off"
+	}
+	if err := decodeJSON(r, &payload); err != nil {
+		writeError(w, http.StatusBadRequest, "device and lesson_path are required")
+		return
+	}
+	if strings.TrimSpace(payload.Device) == "" {
+		writeError(w, http.StatusBadRequest, "device and lesson_path are required")
+		return
+	}
+	lesson := FindLessonInTree(course.Root, strings.TrimSpace(payload.LessonPath))
+	if lesson == nil {
+		writeError(w, http.StatusNotFound, "lesson not found")
+		return
+	}
+	startSeconds := 0
+	if payload.StartSeconds != nil && *payload.StartSeconds > 0 {
+		startSeconds = *payload.StartSeconds
+	}
+	target, hasMedia, err := a.castTarget(r, course, lesson, payload.Transcode, startSeconds)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if !hasMedia {
+		writeError(w, http.StatusBadRequest, "this lesson has no media to cast")
+		return
+	}
+	renderer, ok := a.DLNA.Lookup(payload.Device)
+	if !ok {
+		writeError(w, http.StatusNotFound, "the cast device was not found on the network")
+		return
+	}
+	// A converted stream starts at the right position already: ffmpeg was given
+	// -ss, and a renderer cannot seek inside a live stream.
+	seekTo := startSeconds
+	if target.Converted {
+		seekTo = 0
+	}
+	if err := a.DLNA.Cast(renderer, target.Item, seekTo); err != nil {
+		writeError(w, http.StatusBadGateway, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"success":   true,
+		"device":    renderer.DisplayName(),
+		"title":     target.Item.Title,
+		"url":       target.Item.URL,
+		"converted": target.Converted,
+	})
+}
+
+// castTarget is what a cast actually pushes: either the lesson file itself or,
+// when the renderer would refuse it, a stream ffmpeg converts on the fly.
+type castTarget struct {
+	Item      MediaItem
+	Converted bool
+}
+
+// castTarget builds the media of one lesson. mode is "auto" (convert when the
+// container or the codecs need it), "on" (always convert) or "off" (never
+// convert - hand over the file, which is what OfflineU always did).
+func (a *App) castTarget(r *http.Request, course *Course, lesson *Lesson, mode string, startSeconds int) (castTarget, bool, error) {
+	relative, mime, class := lesson.VideoFile, lesson.VideoMime, "object.item.videoItem"
+	if relative == "" {
+		relative, mime, class = lesson.AudioFile, lesson.AudioMime, "object.item.audioItem.musicTrack"
+	}
+	if relative == "" {
+		return castTarget{}, false, nil
+	}
+	if mime == "" {
+		mime = GuessMime(relative, "video/mp4")
+	}
+	title := strings.TrimSpace(lesson.Title)
+	if title == "" {
+		title = BaseName(relative)
+	}
+	file := a.mediaFileFor(course, lesson)
+	switch strings.ToLower(strings.TrimSpace(mode)) {
+	case "on":
+		if !a.Transcoder.Available() {
+			return castTarget{}, false, errors.New("ffmpeg is not installed, so this lesson cannot be converted")
+		}
+	case "off":
+		file = "" // fall through to the plain file
+	default:
+		if file == "" || !a.Transcoder.Available() || !a.Transcoder.Plan(r.Context(), file).NeedsTranscode {
+			file = ""
+		}
+	}
+	if file == "" {
+		return castTarget{Item: MediaItem{
+			Title: title,
+			URL:   a.absoluteURL(r, fileURL("/files/", relative)),
+			Mime:  mime,
+			Class: class,
+		}}, true, nil
+	}
+
+	// The converted stream: MPEG-TS for video, AAC for a lesson that is audio.
+	streamMime, streamClass := mpegTSMime, "object.item.videoItem"
+	if lesson.VideoFile == "" {
+		streamMime, streamClass = aacADTSMime, "object.item.audioItem.musicTrack"
+	}
+	query := url.Values{}
+	query.Set("lesson", lesson.RelPath)
+	if startSeconds > 0 {
+		query.Set("start", strconv.Itoa(startSeconds))
+	}
+	return castTarget{
+		Item: MediaItem{
+			Title: title,
+			URL:   a.absoluteURL(r, "/api/dlna/stream?"+query.Encode()),
+			Mime:  streamMime,
+			Class: streamClass,
+		},
+		Converted: true,
+	}, true, nil
+}
+
+// mediaFileFor resolves the playable file of a lesson inside the active course
+// and returns "" when it is missing or not allowed.
+func (a *App) mediaFileFor(course *Course, lesson *Lesson) string {
+	if course == nil || lesson == nil {
+		return ""
+	}
+	relative := lesson.VideoFile
+	if relative == "" {
+		relative = lesson.AudioFile
+	}
+	if relative == "" {
+		return ""
+	}
+	full, ok := ResolveInside(course.Path, relative)
+	if !ok || !a.Config.InsideRoots(full) {
+		return ""
+	}
+	if info, err := os.Stat(full); err != nil || info.IsDir() {
+		return ""
+	}
+	return full
+}
+
+// castPlanFor tells the UI whether a cast of this lesson will be converted (and
+// whether it could be at all), so it can say so before the user picks a device.
+func (a *App) castPlanFor(ctx context.Context, course *Course, lesson *Lesson) CastPlan {
+	if !a.Config.DLNAEnabled || !a.Transcoder.Available() {
+		return CastPlan{}
+	}
+	file := a.mediaFileFor(course, lesson)
+	if file == "" {
+		return CastPlan{}
+	}
+	return a.Transcoder.Plan(ctx, file)
+}
+
+// handleDLNAStream feeds a converted stream to a renderer. It is the endpoint
+// /api/dlna/cast hands out when the original file would not play: ffmpeg
+// repackages (or re-encodes) the lesson while the device is already playing.
+func (a *App) handleDLNAStream(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		w.Header().Set("Allow", "GET, HEAD")
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	if !a.Config.DLNAEnabled {
+		writeError(w, http.StatusForbidden, "dlna is disabled")
+		return
+	}
+	course := a.ActiveCourse()
+	if course == nil {
+		writeError(w, http.StatusNotFound, "no course loaded")
+		return
+	}
+	lesson := FindLessonInTree(course.Root, strings.TrimSpace(r.URL.Query().Get("lesson")))
+	if lesson == nil {
+		writeError(w, http.StatusNotFound, "lesson not found")
+		return
+	}
+	file := a.mediaFileFor(course, lesson)
+	if file == "" {
+		writeError(w, http.StatusNotFound, "this lesson has no media to stream")
+		return
+	}
+	if !a.Transcoder.Available() {
+		writeError(w, http.StatusNotImplemented, "ffmpeg is not installed, so this file cannot be converted")
+		return
+	}
+	startSeconds, _ := strconv.Atoi(strings.TrimSpace(r.URL.Query().Get("start")))
+	if r.Method == http.MethodHead {
+		w.Header().Set("Content-Type", mpegTSMime)
+		w.Header().Set("Cache-Control", "no-store")
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+
+	info, err := a.Transcoder.Probe(r.Context(), file)
+	if err != nil {
+		// Without ffprobe we still know whether this is a video or an audio
+		// lesson, which is enough to convert it (slower, but it plays).
+		info = MediaInfo{}
+		if extIn(strings.ToLower(filepath.Ext(file)), audioExtensions) {
+			info.AudioCodec = "unknown"
+		} else {
+			info.VideoCodec = "unknown"
+		}
+		logf("dlna: %v - converting without probing", err)
+	}
+	if err := a.Transcoder.Stream(r.Context(), w, file, info, startSeconds); err != nil {
+		logf("dlna: streaming %s failed: %v", filepath.Base(file), err)
+	}
+}
+
+// handleDLNAControl sends Play, Pause or Stop to a renderer that is already
+// playing something OfflineU pushed to it.
+func (a *App) handleDLNAControl(w http.ResponseWriter, r *http.Request) {
+	if !requireMethod(w, r, http.MethodPost) {
+		return
+	}
+	if !a.Config.DLNAEnabled {
+		writeError(w, http.StatusForbidden, "dlna is disabled")
+		return
+	}
+	var payload struct {
+		Device string `json:"device"`
+		Action string `json:"action"`
+	}
+	if err := decodeJSON(r, &payload); err != nil {
+		writeError(w, http.StatusBadRequest, "device and action are required")
+		return
+	}
+	action := strings.ToLower(strings.TrimSpace(payload.Action))
+	if action != "play" && action != "pause" && action != "stop" {
+		writeError(w, http.StatusBadRequest, "action must be play, pause or stop")
+		return
+	}
+	renderer, ok := a.DLNA.Lookup(payload.Device)
+	if !ok {
+		writeError(w, http.StatusNotFound, "the cast device was not found on the network")
+		return
+	}
+	if err := a.DLNA.Control(renderer, action); err != nil {
+		writeError(w, http.StatusBadGateway, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"success": true,
+		"device":  renderer.DisplayName(),
+		"action":  action,
+	})
+}
+
+// absoluteURL turns a server path into the URL a cast device can fetch. The
+// renderer is another machine on the LAN, so it needs the same host the browser
+// used (and not "localhost", which would point at the TV itself).
+func (a *App) absoluteURL(r *http.Request, serverPath string) string {
+	scheme := "http"
+	if forwarded := strings.TrimSpace(r.Header.Get("X-Forwarded-Proto")); forwarded != "" {
+		scheme = strings.ToLower(strings.Split(forwarded, ",")[0])
+	} else if r.TLS != nil {
+		scheme = "https"
+	}
+	host := strings.TrimSpace(r.Host)
+	if forwarded := strings.TrimSpace(r.Header.Get("X-Forwarded-Host")); forwarded != "" {
+		host = strings.TrimSpace(strings.Split(forwarded, ",")[0])
+	}
+	if host == "" {
+		return serverPath
+	}
+	return scheme + "://" + host + serverPath
 }
 
 // resolveCourseFile validates that a requested file really lives inside the
