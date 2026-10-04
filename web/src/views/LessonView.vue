@@ -53,6 +53,16 @@ const castSession = ref(null)
 let castTimer = 0
 let castEndedHandled = false
 
+// A cast can still be running on a TV while the browser looks at another
+// course: everything below then has to ignore it, otherwise the page would
+// jump back to a lesson that does not exist in the course that is open.
+function castBelongsHere(data) {
+  if (!data || !data.active || !lesson.value) return false
+  const coursePath = payload.value?.course?.path
+  if (coursePath && data.course_path && data.course_path !== coursePath) return false
+  return true
+}
+
 async function refreshCast() {
   try {
     const data = await api.castSession()
@@ -60,7 +70,7 @@ async function refreshCast() {
     followCast(data)
     // The TV finished the lesson: reload so the completion mark and the
     // progress counters of this page match what was stored.
-    if (data && data.active && data.state === 'ended' && !castEndedHandled) {
+    if (data && data.active && data.state === 'ended' && !castEndedHandled && castBelongsHere(data)) {
       castEndedHandled = true
       if (lesson.value && !lesson.value.completed) load(lesson.value.rel_path)
     }
@@ -69,10 +79,18 @@ async function refreshCast() {
   }
 }
 
+// The cast to show on this page: only the one that plays this very lesson of
+// the course that is open.
+const activeCast = computed(() => {
+  const data = castSession.value
+  if (!data || !lesson.value || data.lesson_path !== lesson.value.rel_path) return null
+  return castBelongsHere(data) ? data : null
+})
+
 // When the TV moves on to the next lesson, the page moves with it.
 function followCast(data) {
-  if (!data || !data.active || !data.lesson_url) return
-  if (!lesson.value || data.lesson_path === lesson.value.rel_path) return
+  if (!castBelongsHere(data) || !data.lesson_url) return
+  if (data.lesson_path === lesson.value.rel_path) return
   // No currentPath update here: the route change below has to load the lesson.
   router.push(lessonRoute(data.lesson_url))
 }
@@ -108,6 +126,7 @@ let warningShown = false
 let currentPath = ''
 let lastSavedSecond = 0
 let advanceTimer = 0
+let savingEnabled = false
 
 async function load(path) {
   currentPath = path
@@ -115,6 +134,10 @@ async function load(path) {
   error.value = ''
   textContents.value = {}
   castEndedHandled = false
+  // While another lesson (or another course) is being loaded, the player of
+  // the previous one still fires pause/timeupdate: those must not be saved
+  // under the new lesson's name.
+  savingEnabled = false
   try {
     const data = await api.lesson(path, route.query.autoplay === '1')
     payload.value = data
@@ -122,6 +145,7 @@ async function load(path) {
     resources.value = data.resources || []
     completed.value = Boolean(data.lesson.completed)
     warningShown = false
+    savingEnabled = true
     await nextTick()
     initialisePlayer()
     loadTextResources()
@@ -174,6 +198,7 @@ async function loadTextResources() {
 }
 
 async function save(seconds, completedFlag) {
+  if (!savingEnabled || !lesson.value) return
   try {
     await api.saveProgress(lesson.value.rel_path, { seconds, completed: completedFlag })
   } catch (cause) {
@@ -345,8 +370,8 @@ onBeforeUnmount(() => {
 
       <section v-if="isMedia" class="card lesson-view__player">
         <CastBar
-          v-if="castSession && castSession.lesson_path === lesson.rel_path"
-          :session="castSession"
+          v-if="activeCast"
+          :session="activeCast"
           @refresh="refreshCast"
           @ended="refreshCast"
         />

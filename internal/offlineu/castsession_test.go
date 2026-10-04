@@ -2,6 +2,9 @@ package offlineu
 
 import (
 	"net/http"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -385,6 +388,66 @@ func TestCastIsRecordedLikeOpeningALesson(t *testing.T) {
 	env.app.Progress.ApplyToTree(course)
 	if course.LastAccessedPath != "Section 1/06 - Wrap Up.mp4" {
 		t.Errorf("last accessed = %q", course.LastAccessedPath)
+	}
+}
+
+func TestWatchdogWaitsWhileAnotherCourseIsOpen(t *testing.T) {
+	env := newTestEnv(t)
+	env.loadCourse()
+	courseA := env.app.Store.Get()
+	fake := newFakeRenderer(t)
+	seedRenderers(env.app.DLNA, fake.renderer(t))
+
+	if response := env.request(http.MethodPost, "/api/dlna/cast", map[string]any{
+		"device":      "uuid:fake-renderer",
+		"lesson_path": "Section 1/01 - Intro.mp4",
+	}); response.Code != http.StatusOK {
+		t.Fatalf("status = %d %s", response.Code, response.Body.String())
+	}
+	session := env.app.currentCast()
+	t.Cleanup(func() { env.app.endCast(session) })
+
+	// The user opens a different course while the TV keeps playing.
+	other := filepath.Join(env.root, "Other Course")
+	if err := os.MkdirAll(filepath.Join(other, "Part 1"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(other, "Part 1", "01 - Other.mp4"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if response := env.request(http.MethodPost, "/load_course", map[string]string{"course_path": other}); response.Code != http.StatusOK {
+		t.Fatalf("loading the other course failed: %d %s", response.Code, response.Body.String())
+	}
+	if env.app.Store.Get().Path == courseA.Path {
+		t.Fatal("the other course was not loaded")
+	}
+
+	// The cast survives, but nothing is written into the course that is open.
+	if !env.app.castTick(session) {
+		t.Error("the watchdog must keep the cast alive while another course is open")
+	}
+	// (the other course has no progress file yet, so read it directly)
+	if data, err := os.ReadFile(env.app.Store.Get().ProgressFile); err == nil {
+		if strings.Contains(string(data), "Section 1/01") {
+			t.Errorf("the cast wrote into the other course's progress: %s", data)
+		}
+	}
+
+	// Coming back picks the cast up again.
+	if response := env.request(http.MethodPost, "/load_course", map[string]string{"course_path": env.courseDir}); response.Code != http.StatusOK {
+		t.Fatalf("loading the first course failed: %d %s", response.Code, response.Body.String())
+	}
+	session.Duration = 600
+	session.StartedAt = time.Now().Add(-20 * time.Second)
+	if !env.app.castTick(session) {
+		t.Fatal("the cast should continue after coming back")
+	}
+	stored := struct {
+		ProgressSeconds int `json:"progress_seconds"`
+	}{}
+	env.decodeRaw(env.progressJSON()["Section 1/01 - Intro.mp4"], &stored)
+	if stored.ProgressSeconds < 15 {
+		t.Errorf("progress was not written after coming back: %+v", stored)
 	}
 }
 

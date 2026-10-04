@@ -272,9 +272,16 @@ func (a *App) castTick(session *CastSession) bool {
 		return false
 	}
 	course := a.Store.Get()
-	if course == nil || course.Path != session.CoursePath {
+	if course == nil {
 		a.cast.mutex.Unlock()
 		return false
+	}
+	if course.Path != session.CoursePath {
+		// Another course is open in the browser. The TV keeps playing, so the
+		// cast is neither stopped nor progressed here - the watchdog simply
+		// waits until that course is opened again (or the 6 h guard fires).
+		a.cast.mutex.Unlock()
+		return true
 	}
 
 	// Ask the device where it is - a remote control in the living room can
