@@ -261,6 +261,10 @@ plays next), while the buttons pause, skip and stop the device from the browser.
   the server, not by the page, so it also works with the browser closed. Turn it off by passing
   `autoplay: false` to `/api/dlna/cast` — or by switching off *Autoplay next lesson* in the player
   toolbar before casting.
+* The cast bar is not tied to the lesson page: the **dashboard shows it too** (with a link to the
+  lesson that is playing), so you can watch the progress, pause or skip while browsing the course
+  tree. The lesson page follows the device as soon as it moves on - the comparison is made against
+  the route, so it also works when a lesson is still loading.
 
 Casting can be switched off entirely: `OFFLINEU_DLNA=off` hides the button and makes
 `/api/dlna/*` answer `403`. The discovery result is cached for 30 s; **⟳ Search again** repeats

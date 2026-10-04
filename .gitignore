@@ -18,6 +18,7 @@ data/
 
 # ---- Exported docker images (docker save) ----
 /image-dist/
+*.tar
 
 # ---- Editors / OS ----
 .vscode/

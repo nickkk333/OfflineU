@@ -194,6 +194,7 @@ const en = {
     convertedHint: 'converted for this device',
     next: '⏭ Next',
     seekHint: 'Click the bar to jump to that position',
+    openLesson: '📖 Open this lesson',
     nextUp: 'Next: {title}',
     compatMode: 'Compatibility mode',
     compatHint:
@@ -401,6 +402,7 @@ const zh = {
     convertedHint: '已为设备转换',
     next: '⏭ 下一节',
     seekHint: '点击进度条可跳转到该位置',
+    openLesson: '📖 打开这一节',
     nextUp: '下一节：{title}',
     compatMode: '兼容模式',
     compatHint:

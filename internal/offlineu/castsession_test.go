@@ -213,6 +213,67 @@ func TestWatchdogContinuesWithTheNextLesson(t *testing.T) {
 	}
 }
 
+func TestSessionFollowsTheLessonTheWatchdogStarted(t *testing.T) {
+	env := newTestEnv(t)
+	env.loadCourse()
+	fake := newFakeRenderer(t)
+	seedRenderers(env.app.DLNA, fake.renderer(t))
+
+	if response := env.request(http.MethodPost, "/api/dlna/cast", map[string]any{
+		"device":      "uuid:fake-renderer",
+		"lesson_path": "Section 1/01 - Intro.mp4",
+		"duration":    60,
+	}); response.Code != http.StatusOK {
+		t.Fatalf("status = %d %s", response.Code, response.Body.String())
+	}
+	before := struct {
+		LessonPath    string `json:"lesson_path"`
+		LessonURL     string `json:"lesson_url"`
+		NextLessonURL string `json:"next_lesson_path"`
+	}{}
+	env.decode(env.request(http.MethodGet, "/api/dlna/session", nil), &before)
+	if before.LessonPath != "Section 1/01 - Intro.mp4" {
+		t.Fatalf("lesson = %q", before.LessonPath)
+	}
+	if before.LessonURL != "Section 1/01 - Intro.mp4/Intro" {
+		t.Fatalf("the browser needs the lesson URL to follow: %q", before.LessonURL)
+	}
+
+	session := env.app.currentCast()
+	t.Cleanup(func() { env.app.endCast(session) })
+	session.Duration = 60
+	session.StartedAt = time.Now().Add(-61 * time.Second)
+	if !env.app.castTick(session) {
+		t.Fatal("the watchdog should keep watching after handing over")
+	}
+
+	// What the browser polls next: it has to name the lesson the TV got now.
+	after := struct {
+		Active        bool   `json:"active"`
+		LessonPath    string `json:"lesson_path"`
+		LessonURL     string `json:"lesson_url"`
+		LessonTitle   string `json:"lesson_title"`
+		CoursePath    string `json:"course_path"`
+		NextLessonURL string `json:"next_lesson_path"`
+	}{}
+	env.decode(env.request(http.MethodGet, "/api/dlna/session", nil), &after)
+	if !after.Active {
+		t.Fatalf("the session went inactive: %+v", after)
+	}
+	if after.LessonPath != "Section 1/06 - Wrap Up.mp4" {
+		t.Errorf("lesson = %q, want the next one", after.LessonPath)
+	}
+	if after.LessonURL != "Section 1/06 - Wrap Up.mp4/Wrap_Up" {
+		t.Errorf("lesson url = %q - the browser cannot follow without it", after.LessonURL)
+	}
+	if after.LessonTitle != "Wrap Up" {
+		t.Errorf("lesson title = %q", after.LessonTitle)
+	}
+	if after.CoursePath != env.courseDir {
+		t.Errorf("course = %q", after.CoursePath)
+	}
+}
+
 func TestWatchdogStopsAfterTheLastLesson(t *testing.T) {
 	env := newTestEnv(t)
 	env.loadCourse()

@@ -8,6 +8,7 @@ import CastBar from '../components/CastBar.vue'
 import { api, formatTime, lessonRoute } from '../api.js'
 import { t, translateServerMessage } from '../i18n.js'
 import { useToast } from '../composables/useToast.js'
+import { useCast } from '../composables/useCast.js'
 
 const route = useRoute()
 const router = useRouter()
@@ -48,36 +49,50 @@ const playbackRate = ref(parseFloat(readPreference(RATE_KEY, '1')) || 1)
 
 // The cast that is running on a TV: the browser follows it, and the server
 // pushes the next lesson when this one ends.
-const CAST_POLL_MS = 1500
-const castSession = ref(null)
-let castTimer = 0
+const { cast: castSession, refreshCast } = useCast()
 let castEndedHandled = false
 
 // A cast can still be running on a TV while the browser looks at another
 // course: everything below then has to ignore it, otherwise the page would
 // jump back to a lesson that does not exist in the course that is open.
 function castBelongsHere(data) {
-  if (!data || !data.active || !lesson.value) return false
+  if (!data || !data.active) return false
   const coursePath = payload.value?.course?.path
   if (coursePath && data.course_path && data.course_path !== coursePath) return false
   return true
 }
 
-async function refreshCast() {
+// Follow the TV: when it moves on to the next lesson, this page does too.
+// Compared against the route (not against the lesson that is loaded, which
+// lags behind while a lesson is still being fetched).
+watch(castSession, (data) => {
+  if (!castBelongsHere(data) || !data.lesson_url) return
+  const target = lessonRoute(data.lesson_url)
+  if (!target || isSamePath(target, route.path)) return
+  router.push(target)
+})
+
+// The router keeps percent escapes, a manually typed address may not.
+function isSamePath(left, right) {
+  if (left === right) return true
   try {
-    const data = await api.castSession()
-    castSession.value = data && data.active ? data : null
-    followCast(data)
-    // The TV finished the lesson: reload so the completion mark and the
-    // progress counters of this page match what was stored.
-    if (data && data.active && data.state === 'ended' && !castEndedHandled && castBelongsHere(data)) {
-      castEndedHandled = true
-      if (lesson.value && !lesson.value.completed) load(lesson.value.rel_path)
-    }
+    return decodeURIComponent(left) === decodeURIComponent(right)
   } catch {
-    castSession.value = null
+    return false
   }
 }
+
+watch(
+  castSession,
+  (data) => {
+    // The TV finished the lesson: reload so the completion mark and the
+    // progress counters of this page match what was stored.
+    if (!data || !data.active || data.state !== 'ended' || castEndedHandled) return
+    if (!castBelongsHere(data) || !lesson.value || lesson.value.completed) return
+    castEndedHandled = true
+    load(lesson.value.rel_path)
+  }
+)
 
 // The cast to show on this page: only the one that plays this very lesson of
 // the course that is open.
@@ -86,26 +101,6 @@ const activeCast = computed(() => {
   if (!data || !lesson.value || data.lesson_path !== lesson.value.rel_path) return null
   return castBelongsHere(data) ? data : null
 })
-
-// When the TV moves on to the next lesson, the page moves with it.
-function followCast(data) {
-  if (!castBelongsHere(data) || !data.lesson_url) return
-  if (data.lesson_path === lesson.value.rel_path) return
-  // No currentPath update here: the route change below has to load the lesson.
-  router.push(lessonRoute(data.lesson_url))
-}
-
-function startCastPolling() {
-  refreshCast()
-  if (!castTimer) castTimer = window.setInterval(refreshCast, CAST_POLL_MS)
-}
-
-function stopCastPolling() {
-  if (castTimer) {
-    window.clearInterval(castTimer)
-    castTimer = 0
-  }
-}
 
 const RATES = [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2]
 const isMedia = computed(() => Boolean(lesson.value && (lesson.value.video_file || lesson.value.audio_file)))
@@ -309,14 +304,11 @@ onMounted(() => {
   const initial = route.params.lessonPath
   load(Array.isArray(initial) ? initial.join('/') : initial || '')
   window.addEventListener('keydown', onKeydown)
-  // A cast started on another page (or before a reload) shows up here too.
-  startCastPolling()
 })
 
 onBeforeUnmount(() => {
   window.removeEventListener('keydown', onKeydown)
   window.clearTimeout(advanceTimer)
-  stopCastPolling()
 })
 </script>
 

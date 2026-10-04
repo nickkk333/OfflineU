@@ -4,12 +4,15 @@
 // lets the lesson be paused, skipped or stopped from the browser. When the
 // device reaches the end, the server pushes the next lesson by itself.
 import { computed, ref } from 'vue'
-import { api, formatTime } from '../api.js'
+import { api, formatTime, lessonRoute } from '../api.js'
 import { t } from '../i18n.js'
 import { useToast } from '../composables/useToast.js'
 
 const props = defineProps({
-  session: { type: Object, required: true }
+  session: { type: Object, required: true },
+  // The dashboard shows a link to the lesson that is playing; the lesson page
+  // is already there.
+  showOpen: { type: Boolean, default: false }
 })
 
 const emit = defineEmits(['refresh', 'ended'])
@@ -128,6 +131,13 @@ async function stop() {
       <button type="button" class="btn btn--sm btn--ghost" :disabled="!hasNext" @click="control('next')">
         {{ t('cast.next') }}
       </button>
+      <RouterLink
+        v-if="showOpen && session.lesson_url"
+        class="btn btn--sm btn--ghost"
+        :to="lessonRoute(session.lesson_url)"
+      >
+        {{ t('cast.openLesson') }}
+      </RouterLink>
       <button type="button" class="btn btn--sm" @click="stop">{{ t('cast.stop') }}</button>
       <span class="spacer"></span>
       <span v-if="hasNext" class="faint">{{ t('cast.nextUp', { title: session.next_title }) }}</span>

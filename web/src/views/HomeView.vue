@@ -5,6 +5,10 @@ import { t } from '../i18n.js'
 import CoursePicker from './CoursePicker.vue'
 import DashboardView from './DashboardView.vue'
 import LanguageSwitch from '../components/LanguageSwitch.vue'
+import CastBar from '../components/CastBar.vue'
+import { useCast } from '../composables/useCast.js'
+
+const { cast, refreshCast } = useCast()
 
 onMounted(() => {
   if (!store.loaded) refreshState()
@@ -23,6 +27,15 @@ onMounted(() => {
       <span v-if="store.version" class="badge">v{{ store.version }}</span>
       <LanguageSwitch />
     </header>
+
+    <CastBar
+      v-if="cast"
+      class="home__cast"
+      :session="cast"
+      show-open
+      @refresh="refreshCast"
+      @ended="refreshCast"
+    />
 
     <div v-if="!store.loaded" class="card empty-state">
       <div class="empty-state__icon"><span class="spinner"></span></div>
@@ -48,6 +61,10 @@ onMounted(() => {
   display: flex;
   flex-direction: column;
   gap: 22px;
+}
+
+.home__cast {
+  margin-bottom: -6px;
 }
 
 .brand {
