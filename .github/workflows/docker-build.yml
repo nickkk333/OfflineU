@@ -18,16 +18,34 @@ jobs:
     - name: Checkout repository
       uses: actions/checkout@v4
 
-    - name: Set up Python
-      uses: actions/setup-python@v5
+    - name: Set up Go
+      uses: actions/setup-go@v5
       with:
-        python-version: '3.13'
+        go-version-file: go.mod
+        cache: true
 
-    - name: Install dependencies
-      run: pip install -r requirements.txt
+    - name: Check formatting
+      run: test -z "$(gofmt -l . )" || { gofmt -l .; exit 1; }
+
+    - name: Vet
+      run: go vet ./...
 
     - name: Run test suite
-      run: python -m unittest discover -s tests -v
+      run: go test ./... -count=1
+
+    - name: Set up Node
+      uses: actions/setup-node@v4
+      with:
+        node-version: '22'
+        cache: npm
+        cache-dependency-path: web/package-lock.json
+
+    - name: Build frontend
+      working-directory: web
+      run: npm ci && npm run build
+
+    - name: Verify the embedded frontend
+      run: go run . --check-web
 
   build:
     needs: test
@@ -63,7 +81,7 @@ jobs:
       uses: docker/setup-buildx-action@v3
 
     - name: Build and push Docker image
-      uses: docker/build-push-action@v5
+      uses: docker/build-push-action@v6
       with:
         context: .
         push: ${{ github.event_name != 'pull_request' }}

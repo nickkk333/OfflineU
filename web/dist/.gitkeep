@@ -1,0 +1,3 @@
+The compiled Vue frontend is written into this directory by "npm run build".
+Everything except this placeholder is git-ignored, but the directory itself
+must exist so that the //go:embed directive in main.go can resolve.

@@ -1,6 +1,6 @@
 services:
   offlineu:
-    image: ghcr.io/skippysteve/offlineu:main
+    image: ghcr.io/nickkk333/offlineu:main
     # Uncomment the next line to build the image from this folder instead of pulling it:
     # build: .
     container_name: offlineu-app
@@ -9,7 +9,7 @@ services:
     environment:
       # Everything under /app/courses is browsable and servable, nothing else.
       - OFFLINEU_ROOTS=/app/courses
-      # Keep progress files out of the (read-only) course folder.
+      # Keep progress files and the course list out of the (read-only) course folder.
       - OFFLINEU_PROGRESS_DIR=/app/data
       # Optional: skip the picker and load a course at startup.
       # - AUTO_LOAD_COURSE=/app/courses/My Course
@@ -20,8 +20,8 @@ services:
       - ./data:/app/data
     restart: unless-stopped
     healthcheck:
-      # "curl" is not part of the slim base image, so use Python (as the Dockerfile does)
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5000/health').read()"]
+      # BusyBox wget is part of the Alpine base image used by the Dockerfile.
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:5000/health"]
       interval: 30s
       timeout: 10s
       retries: 3

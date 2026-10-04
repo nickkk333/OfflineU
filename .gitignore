@@ -1,21 +1,22 @@
-# Python
-__pycache__/
-*.py[cod]
-*.egg-info/
-.venv/
-venv/
-env/
-ENV/
+# ---- Go ----
+/offlineu
+/offlineu.exe
+*.test
 
-# OfflineU runtime data
+# ---- Node / Vue frontend ----
+node_modules/
+web/node_modules/
+web/dist/*
+!web/dist/.gitkeep
+
+# ---- OfflineU runtime data ----
 .offlineu_progress.json
 *_progress.json
 *.json.tmp
 courses/
 data/
-dist/
 
-# Editors / OS
+# ---- Editors / OS ----
 .vscode/
 .idea/
 .DS_Store

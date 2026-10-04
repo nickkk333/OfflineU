@@ -1,41 +1,32 @@
-# Version control
+# ---- Version control / CI ----
 .git
 .gitignore
 .github
 
-# Ignore Docker-related files (not needed in the image)
+# ---- Docker files themselves (not needed inside the image) ----
 Dockerfile
 .dockerignore
+docker-compose.yml
 
-# Ignore cache and temporary files. Logs for future use. 
-**/__pycache__/
-*.pyc
-*.pyo
-*.pyd
+# ---- Go build artifacts ----
+/offlineu
+/offlineu.exe
+*.test
+
+# ---- Node / Vue frontend ----
+# node_modules and the built bundle are recreated during the image build.
+**/node_modules
+web/dist/
 *.log
 
-# Ignore virtual environments (if using venv)
-**/python_env/
-**/.venv/
-**/venv/
-**/env/
-**/ENV/
-
-# OfflineU specific
+# ---- OfflineU runtime data ----
 .offlineu_progress.json
 *_progress.json
+*.json.tmp
 data/
 courses/
-tests/
-dist/
 
-# The templates/ directory is NOT ignored: it is the single source of truth for
-# the UI and must be part of the image. (Its path is resolved relative to
-# offlineu_core.py, so the folder is found no matter what the workdir is.)
-
-# Harmless, but reduce image size. In the future, it may make more sense to put 
-# everything needed by the image in e.g., /app and modify the Dockerfile to copy from 
-# /app as opposed to blacklisting files in the repo one-by-one 
+# ---- Documentation and screenshots ----
 LICENSE
 README.md
 images/

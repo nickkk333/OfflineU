@@ -2,303 +2,249 @@
 
 **OfflineU** is a sleek, self-hosted web app that turns any folder of offline video, audio,
 document and quiz material into a fully navigable course dashboard with automatic progress
-tracking. Point it at an Udemy download, an "open sourced" training archive or your own notes -
+tracking. Point it at an Udemy download, an "open sourced" training archive or your own notes —
 no metadata, no database, no cloud.
+
+The backend is a **single static Go binary** (standard library only) that embeds a redesigned
+**Vue 3** frontend, so deployment is one file: no Python, no Node, no virtualenv, no runtime
+dependencies.
 
 ---
 
 ## ✨ Features
 
-* 📁 **Directory browser & folder parsing** - pick a course with a click, OfflineU maps its
+* 📁 **Directory browser & folder parsing** — pick a course with a click, OfflineU maps its
   structure into a browsable tree view.
-* 🧷 **Remembers your courses** - the course you picked is written to disk, so coming back to
-  the home page, switching courses or restarting OfflineU never loses it.
-* 🎥 **Video & audio player** - integrated player with resume, watched-time tracking and
+* 🧷 **Remembers your courses** — the course you picked is written to disk, so coming back to
+  the home page, switching courses or restarting OfflineU never loses it. Each remembered
+  course also shows a completion percentage, so you can see what to continue at a glance.
+* 🎥 **Video & audio player** — integrated player with resume, watched-time tracking and
   automatic completion when the media ends.
-* ▶️ **Continuous playback** - when a video finishes, the next playable lesson starts
+* ▶️ **Continuous playback** — when a video finishes, the next playable lesson starts
   automatically (documents in between are skipped), and the speed you picked carries over to
   every following lesson. Both can be turned off in the player toolbar.
-* 📄 **Documents inline** - `.txt`/`.md` are shown as text, `.html`/`.pdf` are embedded,
-  other Office files get an "open in new tab" link.
-* 💬 **Subtitles** - `.srt`/`.vtt` files next to a video are attached to it and converted to
+* 📄 **Documents inline** — `.txt`/`.md` are shown as text, `.html`/`.pdf` are embedded, other
+  Office files get an "open in new tab" link.
+* 💬 **Subtitles** — `.srt`/`.vtt` files next to a video are attached to it and converted to
   WebVTT on the fly, so the browser can actually display them.
-* ✅ **Lesson progress tracking** - time spent and completion are stored automatically and are
+* ✅ **Lesson progress tracking** — time spent and completion are stored automatically and are
   never lost by revisiting a lesson.
-* ♻️ **Continue where you left off** - a resume card on the dashboard jumps straight back to
+* ♻️ **Continue where you left off** — a resume card on the dashboard jumps straight back to
   the last lesson.
-* ⌨️ **Keyboard shortcuts** - space (play/pause), ← / → (skip 10 s), ↑ / ↓ (volume).
-* 💾 **Local-first & private** - 100% offline, progress is a plain JSON file you own.
-* 🧑‍💻 **Works with any course format** - no metadata required, just structured folders.
+* ⌨️ **Keyboard shortcuts** — space (play/pause), ← / → (skip 10 s), ↑ / ↓ (volume).
+* 💾 **Local-first & private** — 100% offline, progress is a plain JSON file you own.
+* 🧑‍💻 **Works with any course format** — no metadata required, just structured folders.
 * 🐳 **Self-hosted Docker deployment** with a hardened, configurable file-access allow-list.
 
 ---
 
 ## 🖼️ Screenshots
 
-> ![image](https://github.com/WhiskeyCoder/OfflineU/blob/main/images/lesson-0-8-2025-08-04-04_58_17.png)
+> ![OfflineU lesson view](images/lesson-0-8-2025-08-04-04_58_17.png)
 
 ---
 
 ## 🛠️ Installation
 
-### 🔁 Quick Start (Local)
+### 📦 Build from source (one binary)
 
-1. Clone the repo:
-
-   ```bash
-   git clone https://github.com/WhiskeyCoder/OfflineU.git
-   cd OfflineU
-   ```
-
-2. Create a virtual environment and install the dependencies.
-
-   **Windows - CMD:**
-
-   ```bat
-   python -m venv .venv
-   .venv\Scripts\activate.bat
-   pip install -r requirements.txt
-   ```
-
-   **Windows - PowerShell:**
-
-   ```powershell
-   python -m venv .venv
-   .\.venv\Scripts\Activate.ps1
-   pip install -r requirements.txt
-   ```
-
-   > If PowerShell refuses to run the activate script ("running scripts is disabled on this
-   > system"), allow it for the current session only:
-   > `Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass`
-
-   **Linux / macOS / Git Bash (shells that have `source`):**
-
-   ```bash
-   python3 -m venv .venv
-   source .venv/bin/activate
-   pip install -r requirements.txt
-   ```
-
-   > Activating is convenient but optional - you can call the interpreter directly:
-   > `.venv\Scripts\python -m pip install -r requirements.txt` and
-   > `.venv\Scripts\python offlineu_core.py` (use `.venv/bin/python ...` on Linux/macOS).
-   > Note that `source` does **not** exist in CMD/PowerShell; it is a bash builtin.
-
-3. Run the app:
-
-   ```bash
-   python offlineu_core.py
-   ```
-
-4. Open your browser and pick your course folder:
-
-   ```
-   http://127.0.0.1:5000
-   ```
-
-   You can also load a course right away:
-
-   ```bash
-   python offlineu_core.py "D:\Courses\Python Tutorial"
-   ```
-
-By default OfflineU only listens on `127.0.0.1`. Pass `--host 0.0.0.0` (or set
-`OFFLINEU_HOST`) if you really want to expose it to your network - see
-[Security notes](#-security-notes) first.
-
----
-
-## 📂 Folder Structure Example
+Requirements: [Go 1.23+](https://go.dev/dl/) and [Node 20+](https://nodejs.org/) — Node is only
+needed to build the frontend.
 
 ```bash
-MyCourse/
-├── Section 1/
-│   ├── 01 - Intro.mp4
-│   ├── 01 - Intro.srt          ← attached to the video above
-│   ├── 02 - Setup Guide.pdf
-│   └── 03 - Quiz.html
-├── Section 2/
-│   ├── 04 - Advanced Tips.mp4
-│   └── resources/
-│       └── extras.md
-└── .offlineu_progress.json     ← created automatically (unless relocated)
+git clone https://github.com/nickkk333/OfflineU.git
+cd OfflineU
 ```
 
-> 🌟 File types are detected automatically - videos, audio, quizzes and documents.
-> Hidden files (starting with `.`) and unsupported extensions are ignored.
+1. Build the frontend into `web/dist` (it is embedded into the binary):
+
+   ```bash
+   cd web
+   npm install
+   npm run build
+   cd ..
+   ```
+
+2. Build (and verify) the binary:
+
+   ```bash
+   go build -o offlineu .
+   ./offlineu --check-web        # prints "Frontend assets OK" and exits
+   ```
+
+3. Run it, pointing OfflineU at your course folder:
+
+   ```bash
+   ./offlineu "/path/to/My Course"      # Windows: .\offlineu.exe "D:\Courses\My Course"
+   ```
+
+4. Open <http://127.0.0.1:5000>. Without a path argument OfflineU restores the last course it
+   opened; with no remembered course you get the folder picker.
+
+> `web/dist` always exists in the repository (kept by a tracked `.gitkeep`), so `go build`
 
 ---
 
-## 📁 Supported File Types
+## 📚 Course layout
 
-| Type      | Extensions                                                  | Rendering                       |
-| --------- | ----------------------------------------------------------- | ------------------------------- |
-| Videos    | `.mp4`, `.mkv`, `.webm`, `.mov`, `.avi`, `.m4v`, `.flv`, `.wmv` | HTML5 player with resume     |
-| Audio     | `.mp3`, `.wav`, `.m4a`, `.aac`, `.ogg`, `.flac`             | HTML5 player with resume        |
-| Docs      | `.txt`, `.md`                                               | Fetched and shown as plain text |
-| Docs      | `.html`, `.htm`, `.pdf`                                     | Embedded in an iframe           |
-| Docs      | `.docx`, `.doc`, `.rtf`                                     | Download / open in a new tab    |
-| Subtitles | `.srt`, `.vtt`, `.ass`, `.sub`, `.sbv`                      | Converted to WebVTT, attached to the video |
-| Quizzes   | any document whose name contains `quiz`, `exam`, `test`, …  | Badge + document view           |
+OfflineU needs no metadata: every file it understands becomes one lesson, and the folder
+structure becomes the course tree (hidden files/folders are ignored, scans stop after 10 levels).
 
-> Browsers only play the codecs they know: `.mkv`/`.avi` containers may still need to be
-> converted to `.mp4`/`.webm` before they play in the browser.
+```text
+My Course/
+├── Section 1 - Getting Started/
+│   ├── 01 - Welcome.mp4            → video lesson (resume + autoplay)
+│   ├── 01 - Welcome.srt            → attached as subtitles (converted to WebVTT)
+│   ├── 02 - Notes.md               → text lesson
+│   ├── 03 - Quiz.html              → quiz lesson (name contains "quiz"/"exam"/"test")
+│   └── 04 - Handout.docx           → document with an "open in a new tab" link
+└── Section 2 - Deep Dive/
+    ├── 01 - Lecture.mp3            → audio lesson
+    └── resources/
+        └── cheat-sheet.pdf         → embedded PDF lesson
+```
+
+| Type      | Extensions                                          | Behaviour                                |
+| --------- | --------------------------------------------------- | ---------------------------------------- |
+| Video     | `.mp4` `.mkv` `.avi` `.mov` `.webm` `.m4v` `.flv` `.wmv` | Inline player, resume, completion on end |
+| Audio     | `.mp3` `.wav` `.m4a` `.aac` `.ogg` `.flac`           | Inline player, resume, completion on end |
+| Text      | `.txt` `.md`                                         | Rendered as text in the lesson view      |
+| Embed     | `.html` `.htm` `.pdf`                                | Rendered in an iframe                    |
+| Other doc | `.docx` `.doc` `.rtf`                                | Download/open link                       |
+| Subtitles | `.srt` `.vtt` `.ass` `.sub` `.sbv`                   | Attached to the sibling video, served as VTT |
 
 ---
 
-## ⚙️ CLI Options
+## 💾 Where your data lives
 
-| Option                             | Description                                                    |
-| ---------------------------------- | -------------------------------------------------------------- |
-| `--host`                           | Host to bind to (default: `127.0.0.1`, env `OFFLINEU_HOST`)     |
-| `--port`                           | Port to bind to (default: `5000`, env `OFFLINEU_PORT`)          |
-| `--debug`                          | Enable Flask debug mode                                        |
-| `--create-templates` / `--check-templates` | Verify that the HTML templates are present (creates `templates/` if missing) |
-| `<course_path>`                    | Load a course directly at startup                              |
-
----
-
-## 🌍 Environment Variables
-
-| Variable                | Description                                                                                            |
-| ----------------------- | ------------------------------------------------------------------------------------------------------ |
-| `OFFLINEU_HOST`         | Default value for `--host` (use `0.0.0.0` inside Docker)                                                |
-| `OFFLINEU_PORT`         | Default value for `--port`                                                                             |
-| `OFFLINEU_ROOTS`        | Allow-list of folders (`:`/`;` separated). When set, browsing, loading and file serving are limited to these folders. **Recommended whenever OfflineU is reachable from the network.** |
-| `OFFLINEU_PROGRESS_DIR` | Store progress files **and the course list** (`offlineu_state.json`) in this folder instead of inside the course folder / next to the app. Needed when the course folder is read-only. |
-| `AUTO_LOAD_COURSE`      | Load this course as soon as the server starts (same as passing the path)                                |
-| `OFFLINEU_SECRET_KEY`   | Flask secret key. A random one is generated per start when unset (OfflineU keeps no sessions).          |
-
----
-
-## 💾 How progress is stored
-
-* Every course gets one JSON file. By default it lives **inside the course folder** as
-  `.offlineu_progress.json`; with `OFFLINEU_PROGRESS_DIR` it is stored as
-  `<md5-ish hash>_progress.json` in that folder instead.
-* Keys are **course-relative paths** (e.g. `Section 1/01 - Intro.mp4`), so renaming the
-  lesson display name no longer loses progress. Files written by older versions (which used
-  `<path>/<Title_With_Underscores>`) are still read.
-* Each entry stores `completed`, `progress_seconds` and `last_accessed`.
-  Watched seconds never move backwards, and opening a lesson **never** resets its completion.
-* Writes are locked and atomic (temp file + `os.replace`), so an interrupted save cannot
-  truncate your progress file. If the location is not writable, the API returns an error and
-  the lesson page shows a warning instead of failing silently.
-
-### Remembered courses
-
-* Next to the progress files OfflineU keeps one small bookkeeping file, `offlineu_state.json`
-  (in `OFFLINEU_PROGRESS_DIR` when set, otherwise `./data/` next to the app). It stores the
-  course you are on (`active_course`) and the courses you opened before (`recent_courses`,
-  newest first, up to 20).
-* Opening the home page reopens the last course automatically - so a page reload, a server
-  restart or a container restart no longer looks like "my course was deleted".
-* **Select Different Course** keeps the course in the picker's *Recent courses* card, so
-  switching back is one click and never requires typing a path again. The `✕` button removes
-  an entry from that list; it never touches your files or progress.
-* Entries whose folder disappeared, or that fall outside `OFFLINEU_ROOTS`, are hidden
-  automatically. Deleting the state file only clears the convenience list.
-
-### Player behaviour
-
-* **Autoplay next:** when a video/audio lesson reaches the end it is marked as completed and
-  ~1 s later the page moves on to the next *playable* lesson. Documents sitting between two
-  videos are skipped (they cannot be played); if nothing playable is left, the next lesson -
-  document or not - is opened so the course still advances. The last lesson simply stops.
-* The **"Autoplay next lesson"** checkbox in the player toolbar turns this off, and the choice
-  is remembered in your browser.
-* **Playback speed:** the toolbar offers 0.5× - 2× and stays in sync with the browser's own
-  speed menu. The chosen rate is remembered per browser and re-applied to every following
-  lesson, so a course watched at 1.5× keeps playing at 1.5× - including when autoplay moves on
-  or the page is reloaded. Resume position and speed are set *before* autoplay starts.
-* Browsers sometimes refuse to start playback with sound on a freshly loaded page; OfflineU
-  then shows "Autoplay was blocked by the browser - press play to continue".
-* These preferences live in your browser's localStorage (`offlineu.playbackRate`,
-  `offlineu.autoplayNext`), never in the course folder.
-
-
----
-
-## 🐳 Docker
-
-```bash
-docker compose up -d
-# then open http://localhost:5000
-```
-
-`docker-compose.yml` mounts `./courses` (your library, read-only) and `./data` (progress) and
-sets `OFFLINEU_ROOTS=/app/courses`, so the container can only ever see your course folder:
-
-```yaml
-environment:
-  - OFFLINEU_ROOTS=/app/courses
-  - OFFLINEU_PROGRESS_DIR=/app/data
-  # - AUTO_LOAD_COURSE=/app/courses/My Course
-volumes:
-  - ./courses:/app/courses:ro
-  - ./data:/app/data
-```
-
-The image (`ghcr.io/skippysteve/offlineu`) is built and pushed by GitHub Actions on every
-push to `main` and every `v*` tag, after the test suite passes.
-
-Because `OFFLINEU_PROGRESS_DIR` points at `/app/data`, the mounted `./data` folder also keeps
-the course list: restart or recreate the container and OfflineU reopens the course you had
-open (and still offers every other one it remembers).
-
-### Building / moving the image
-
-```bash
-docker build -t offlineu:latest .
-```
-
-Export the built image as one file, so it can be copied to any machine (no registry needed):
-
-```bash
-docker save -o dist/offlineu-image.tar offlineu:latest   # -> ~210 MB tar
-# on the target machine
-docker load -i offlineu-image.tar                        # or: docker load < offlineu-image.tar
-docker run -d --name offlineu -p 5000:5000 \
-  -v /path/to/your/courses:/app/courses:ro \
-  -v /path/to/offlineu-data:/app/data \
-  offlineu:latest
-```
-
-The course library is mounted read-only: progress files *and* the course list are written to
-`/app/data`, so the course folders are never modified.
-
+* **Progress** — `.offlineu_progress.json`, stored next to the course by default. With
+  `OFFLINEU_PROGRESS_DIR` set, each course gets `<12-char-sha1>-progress.json` inside that
+  folder instead (used by the Docker image so course mounts can stay read-only). It is a flat
+  JSON map keyed by the lesson's relative path:
+  `{"Section 1/01 - Intro.mp4/Intro": {"completed": true, "progress_seconds": 412}}`.
+  Partial updates never reset stored values: sending `progress_seconds` alone keeps the
+  completion flag, and watched seconds never move backwards.
+* **Course bookkeeping** — `offlineu_state.json` remembers the active course and the recent
+  course list (up to 20 entries). It lives in `OFFLINEU_PROGRESS_DIR`, or in a `data/` folder
+  next to the working directory otherwise. Every entry caches the number of lessons
+  (`total_lessons`) so the picker can show a completion percentage without re-scanning the
+  course; `completed_lessons` is counted from the progress file on each `/api/state` call.
 
 ---
 
 ## 🔌 HTTP API
 
-| Method | Endpoint                          | Purpose                                                        |
-| ------ | --------------------------------- | -------------------------------------------------------------- |
-| GET    | `/`                               | Dashboard, or the course picker when nothing is loaded          |
-| GET    | `/browse?path=<dir>`              | JSON listing of one directory level (used by the picker)        |
-| POST   | `/load_course`                    | `{"course_path": "..."}` - parse a folder and make it active    |
-| GET    | `/lesson/<lesson_path>`           | Lesson page (player, documents, prev/next)                      |
-| POST   | `/api/progress`                   | Partial update: `{"lesson_path", "completed", "progress_seconds"}` (omitted fields are left untouched) |
-| GET    | `/files/<path>`                   | Serve a file inside the active course                           |
-| GET    | `/subtitles/<path>`               | Serve subtitles as WebVTT (converts SRT on the fly)             |
-| GET    | `/health`                         | `{"status": "healthy"}` (used by Docker health checks)          |
-| GET    | `/reset_course`                   | Back to the picker; the course stays in the recent list         |
-| GET    | `/forget_course?path=<dir>`       | Remove one entry from the recent course list                    |
+The Vue frontend talks to the same JSON API the previous version exposed, so every endpoint
+stays scriptable:
+
+| Method | Endpoint                                | Purpose                                                        |
+| ------ | --------------------------------------- | -------------------------------------------------------------- |
+| GET    | `/`                                     | SPA shell (the Vue app decides dashboard vs. picker)            |
+| GET    | `/api/state`                            | Active course, its lesson tree, recent courses (with completion counters) and version |
+| GET    | `/browse?path=<dir>`                    | JSON listing of one directory level (used by the picker)        |
+| POST   | `/load_course`                          | `{"course_path": "..."}` — parse a folder and make it active    |
+| GET    | `/api/lesson?path=<lesson>&autoplay=1`  | Lesson payload: media/subtitle URLs, documents, neighbours, autoplay target, storage warning |
+| GET    | `/lesson/<lesson_path>`                 | Deep link into the SPA lesson view                              |
+| POST   | `/api/progress`                         | Partial update: `{"lesson_path", "completed", "progress_seconds"}` (omitted fields are left untouched) |
+| GET    | `/files/<path>`                         | Serve a file inside the active course                           |
+| GET    | `/subtitles/<path>`                     | Serve subtitles as WebVTT (converts SRT on the fly)             |
+| GET    | `/health`                               | `{"status": "healthy"}` (used by Docker health checks)          |
+| POST   | `/api/reset_course`                     | Back to the picker; the course stays in the recent list         |
+| POST   | `/api/forget_course`                    | `{"path": "..."}` — remove one entry from the recent list       |
+| GET    | `/reset_course`, `/forget_course`       | Legacy redirect variants of the two endpoints above             |
+
+`/api/browse` and `/api/load_course` are accepted as aliases of the two picker endpoints.
+
+---
+
+## 🗂️ Project structure
+
+```text
+OfflineU/
+├── main.go                     # CLI, embedded frontend, HTTP server bootstrap
+├── internal/offlineu/
+│   ├── config.go               # flags/env, OFFLINEU_ROOTS allow-list, path helpers
+│   ├── model.go                # Course / Lesson / file-type tables, JSON marshalling
+│   ├── parser.go               # folder → course tree, quiz detection, text resources
+│   ├── paths.go                # URL escaping, recursive scanning helpers
+│   ├── progress.go             # progress file loading/saving, watched-time rules
+│   ├── store.go                # active course + recent courses (offlineu_state.json)
+│   ├── subtitles.go            # SRT → WebVTT conversion (CP1252 fallback)
+│   ├── server.go               # routes, JSON API, static + SPA fallback
+│   └── *_test.go               # Go test suite
+└── web/                        # Vue 3 + Vite frontend (built into web/dist and embedded)
+    ├── src/{api.js,store.js,router.js,views,components,composables,styles}
+    └── vite.config.js          # dev server proxies the API to :5000
+```
+
+---
+
+## 👩‍💻 Development
+
+Two terminals give hot reload in the frontend while the real Go backend serves the data:
+
+```bash
+# terminal 1 — API on http://127.0.0.1:5000
+go run . "/path/to/My Course"
+
+# terminal 2 — Vite dev server on http://127.0.0.1:5173 (proxies /api, /files, ...)
+cd web
+npm install
+npm run dev
+```
+
+For a production build, run `cd web && npm run build` and then `go build -o offlineu .` — the
+compiled bundle is embedded into the binary. `--web-dir web/dist` lets you serve the bundle
+from disk instead (handy when experimenting with `npm run build`).
 
 ---
 
 ## 🧪 Tests
 
-The suite uses only the standard library plus Flask's test client, so it runs offline:
+The Go suite uses only the standard library, so it runs completely offline:
 
 ```bash
-python -m unittest discover -s tests -v
+go test ./... -count=1
 ```
 
-It covers folder parsing, subtitle attachment, document modes, progress persistence
-(including the "revisiting a lesson must not reset it" regression), path-traversal
-protection, the `OFFLINEU_ROOTS` allow-list, the JSON API and the CLI.
+It covers folder parsing, subtitle attachment, document modes, autoplay selection, progress
+persistence (including the "revisiting a lesson must not reset it" regression), path-traversal
+protection, the `OFFLINEU_ROOTS` allow-list, the JSON API, the course store and the CLI.
+
+Useful companions:
+
+```bash
+gofmt -l .          # formatting
+go vet ./...        # static checks
+go run . --check-web # is the frontend bundle embedded?
+```
+
+---
+
+## 🐳 Docker
+
+Build and run with Docker Compose (mount your courses read-only, keep progress in `./data`):
+
+```yaml
+services:
+  offlineu:
+    image: ghcr.io/nickkk333/offlineu:main
+    ports: ["5000:5000"]
+    environment:
+      - OFFLINEU_ROOTS=/app/courses
+      - OFFLINEU_PROGRESS_DIR=/app/data
+    volumes:
+      - ./courses:/app/courses:ro
+      - ./data:/app/data
+```
+
+```bash
+docker compose up -d          # or: docker build -t offlineu . && docker run ...
+```
+
+The image is a three-stage build (Node builds the frontend, Go compiles the static binary,
+Alpine runs it) and comes out at a few tens of megabytes — no Python and no Node in the final
+layer.
 
 ---
 
@@ -310,16 +256,19 @@ OfflineU is designed for a trusted LAN or a single machine:
 * There is **no authentication**. Anyone who can reach the port can browse the folders that
   are in scope and download the files inside them.
 * Set **`OFFLINEU_ROOTS`** to a dedicated course folder to limit what is browsable and
-  servable. File requests are resolved with `os.path.commonpath` and symlinks are resolved, so
-  `..` escapes and prefix tricks (e.g. `/courses-ab` for `/courses`) are rejected.
+  servable. Requests are resolved with `filepath.Rel` *and* symlink evaluation, so `..`
+  escapes and prefix tricks (e.g. `/courses-ab` for `/courses`) are rejected with `403`.
+* URL paths are unescaped exactly once, so double-encoded traversal attempts stay inert.
+* Request bodies are capped (1 MiB) and only JSON `POST` routes mutate state.
 
 ---
 
 ## 🧠 Roadmap
 
 * [x] Base function and testing
-* [x] Self hosted Docker Deployment
+* [x] Self hosted Docker deployment
 * [x] Directory browser, subtitle support, keyboard shortcuts
+* [x] Go rewrite with an embedded Vue 3 frontend
 * [ ] Multi-user profile support
 * [ ] Dark/light theme switcher
 * [ ] Built-in quiz interactivity
@@ -332,19 +281,48 @@ OfflineU is designed for a trusted LAN or a single machine:
 
 Join the development, suggest features, or ask questions via:
 
-* GitHub Issues: [https://github.com/WhiskeyCoder/OfflineU/issues](https://github.com/WhiskeyCoder/OfflineU/issues)
+* GitHub Issues: [https://github.com/nickkk333/OfflineU/issues](https://github.com/nickkk333/OfflineU/issues)
 
 ---
 
 ## 🛡️ License
 
-MIT License - Use freely, modify locally, share widely.
+MIT License — use freely, modify locally, share widely.
 
 ---
 
-## ✨ Author
+## ✨ Credits
 
-Built with ❤️ by [@WhiskeyCoder](https://github.com/WhiskeyCoder)
+Originally built with ❤️ by [@WhiskeyCoder](https://github.com/WhiskeyCoder) as a Python/Flask
+application; this version is a Go + Vue 3 rewrite that keeps the same features and API.
 Inspired by the dream of **learning freely, offline, and without limits.**
 
 
+> works even before you run `npm run build` — you would just see the API-only notice.
+
+---
+
+## ⚙️ Configuration
+
+Command line:
+
+| Flag              | Default     | Purpose                                                       |
+| ----------------- | ----------- | ------------------------------------------------------------- |
+| `--host`          | `127.0.0.1` | Interface to bind to (`0.0.0.0` to expose it)                 |
+| `--port`          | `5000`      | Port to listen on                                              |
+| `--debug`         | `false`     | Verbose request logging                                        |
+| `--web-dir <dir>` | (embedded)  | Serve the frontend from a directory instead of the binary      |
+| `--check-web`     | `false`     | Verify the bundled frontend exists and exit (alias: `--check-templates`) |
+
+Environment variables:
+
+| Variable                | Purpose                                                                   |
+| ----------------------- | ------------------------------------------------------------------------- |
+| `OFFLINEU_HOST`         | Default for `--host`                                                       |
+| `OFFLINEU_PORT`         | Default for `--port`                                                       |
+| `OFFLINEU_ROOTS`        | Path-list (`;` on Windows, `:` elsewhere) of folders OfflineU may browse and serve. **Strongly recommended.** |
+| `OFFLINEU_PROGRESS_DIR` | Store progress files *and* the course list here instead of next to the course |
+| `AUTO_LOAD_COURSE`      | Load this course at startup when no path argument is given                  |
+
+Any positional argument is a course folder to load on startup:
+`offlineu "/mnt/media/Courses/Go in Depth"`.
