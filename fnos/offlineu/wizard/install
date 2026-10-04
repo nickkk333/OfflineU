@@ -1,0 +1,9 @@
+[
+  {
+    "stepTitle": "运行参数",
+    "items": [
+      { "type": "string", "field": "OFFLINEU_HTTP_PORT", "label": "对外访问端口", "defaultValue": "5000" },
+      { "type": "string", "field": "OFFLINEU_TZ", "label": "时区", "defaultValue": "Asia/Shanghai" }
+    ]
+  }
+]
