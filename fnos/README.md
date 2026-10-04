@@ -38,9 +38,8 @@ cd fnos
 ## 镜像（关键）
 
 `app/docker/docker-compose.yaml` 引用 `ghcr.io/nickkk333/offlineu:main`，该镜像由
-`.github/workflows/docker-build.yml` 在推送时**自动构建为多架构（linux/amd64 + linux/arm64）**，
-因此可在 x86 与 ARM 的飞牛NAS 上运行。安装前请确认 CI 已成功构建出多架构镜像
-（首次安装时 `pull_policy: always` 会自动拉取）。
+`.github/workflows/docker-build.yml` 在推送时**自动构建为 amd64**，可在 x86 飞牛NAS 上运行。
+安装前请确认 CI 已成功构建出该镜像（首次安装时 `pull_policy: always` 会自动拉取）。
 
 ## 安装
 
