@@ -16,6 +16,7 @@ package offlineu
 
 import (
 	"context"
+	"crypto/sha1"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -28,6 +29,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -35,7 +37,19 @@ import (
 const (
 	EnvFFmpeg  = "OFFLINEU_FFMPEG"
 	EnvFFprobe = "OFFLINEU_FFPROBE"
+	// OFFLINEU_NO_AUTOFFMPEG stops the auto-download of a static ffmpeg when none
+	// is found on the machine (any OS/arch).
+	EnvNoAutoFFmpeg = "OFFLINEU_NO_AUTOFFMPEG"
 )
+
+// ffmpegStaticBase points at the eugeneware/ffmpeg-static release, which ships a
+// single static ffmpeg binary per platform (no ffprobe, but OfflineU detects
+// containers and codecs with "ffmpeg -i" when ffprobe is absent). OfflineU pulls
+// it whenever the runtime has no ffmpeg of its own - this is what makes local
+// playback and casting work out of the box on Windows and on ARM NAS boxes (e.g.
+// fnOS/飞牛OS) whose image may not ship ffmpeg. A previously downloaded copy is
+// reused without hitting the network again.
+const ffmpegStaticBase = "https://github.com/eugeneware/ffmpeg-static/releases/latest/download"
 
 // Containers a renderer can normally play straight from the file server.
 // Everything else (mkv, avi, flv, wmv, webm, …) is repackaged.
@@ -72,8 +86,12 @@ type CastPlan struct {
 
 // Transcoder wraps the optional ffmpeg installation.
 type Transcoder struct {
-	ffmpeg  string
-	ffprobe string
+	ffmpeg   string
+	ffprobe  string
+	cacheDir string // remuxed MP4s for local browser playback
+
+	autoMu   sync.Mutex
+	autoDone bool // auto-download attempted at most once
 }
 
 // NewTranscoder looks for ffmpeg/ffprobe: OFFLINEU_FFMPEG and OFFLINEU_FFPROBE
@@ -91,6 +109,10 @@ func NewTranscoder() *Transcoder {
 			transcoder.ffprobe = candidate
 		}
 	}
+	// Remuxed MP4s for local playback are kept here between requests (and across
+	// restarts) so a lesson is only transcoded once and seeking reuses the file.
+	transcoder.cacheDir = filepath.Join(os.TempDir(), "offlineu-browser-cache")
+	_ = os.MkdirAll(transcoder.cacheDir, 0o755)
 	return transcoder
 }
 
@@ -194,6 +216,9 @@ func (t *Transcoder) probeWithFFmpeg(ctx context.Context, file string) MediaInfo
 var (
 	ffmpegStreamPattern   = regexp.MustCompile(`Stream #[^\n]*?: (Video|Audio): ([A-Za-z0-9_.-]+)`)
 	ffmpegDurationPattern = regexp.MustCompile(`Duration: (\d+):(\d{2}):(\d{2})(?:\.(\d+))?`)
+	// ffmpeg -i prints "Input #0, <format>, from 'file':" on its diagnostics
+	// stream; this lets OfflineU read the real container without ffprobe.
+	ffmpegInputFormatPattern = regexp.MustCompile(`Input #0, ([^,]+),`)
 )
 
 // parseFFmpegHeader lifts the codecs and the duration out of "ffmpeg -i".
@@ -336,6 +361,9 @@ func (t *Transcoder) Args(file string, info MediaInfo, startSeconds int) ([]stri
 // Stream runs ffmpeg and copies its output to the renderer. The process is
 // bound to the request: a device that stops or disconnects kills it at once.
 func (t *Transcoder) Stream(ctx context.Context, w http.ResponseWriter, file string, info MediaInfo, startSeconds int) error {
+	// On a bare local machine ffmpeg may be missing: fetch the static build so
+	// casting works out of the box, just like local browser playback does.
+	t.ensureFFmpeg()
 	args, mime, err := t.Args(file, info, startSeconds)
 	if err != nil {
 		return err
@@ -416,4 +444,350 @@ func formatClockDuration(totalSeconds int) string {
 	minutes := (totalSeconds % 3600) / 60
 	seconds := totalSeconds % 60
 	return fmt.Sprintf("%02d:%02d:%02d", hours, minutes, seconds)
+}
+
+// browserFriendlyContainer reports whether a browser's <video>/<audio> element
+// can play a file whose real container is format (ffprobe's format_name).
+// MPEG-TS, MKV, AVI, FLV and WMV are not played by browsers regardless of their
+// codecs, so a file the extension claims is an .mp4 but which is really an
+// MPEG-TS stream has to be repackaged before it will play locally.
+//
+// Note: ffprobe reports both WebM and MKV as "matroska,webm", so the two cannot
+// be told apart by container name alone - we treat that name as unfriendly and
+// remux to MP4, which is safe for either (WebM's VP8/VP9 copy cleanly into an
+// MP4, and an MKV simply gets a browser-native container too).
+func browserFriendlyContainer(format string) bool {
+	switch format {
+	case "mov,mp4,m4a,3gp,3g2,mj2", "mp4", "m4v", "quicktime", "webm", "ogg":
+		return true
+	}
+	return false
+}
+
+// containerMime maps a probed container to the MIME a browser expects for it.
+func containerMime(format string) string {
+	switch format {
+	case "mov,mp4,m4a,3gp,3g2,mj2", "mp4", "m4v", "quicktime":
+		return "video/mp4"
+	case "webm":
+		return "video/webm"
+	case "ogg", "ogv":
+		return "video/ogg"
+	}
+	return ""
+}
+
+// realContainer probes the actual container format of a file, independent of its
+// (possibly lying) extension. ffprobe is preferred; when it is absent (the
+// auto-downloaded static build ships only ffmpeg) OfflineU falls back to parsing
+// "ffmpeg -i". An empty result means the container could not be read, in which
+// case the caller serves the bytes as-is.
+func (t *Transcoder) realContainer(ctx context.Context, file string) string {
+	if !t.Available() {
+		return ""
+	}
+	if t.ffprobe != "" {
+		ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		defer cancel()
+		output, err := exec.CommandContext(ctx, t.ffprobe,
+			"-v", "quiet", "-show_format", "-of", "json", file).Output()
+		if err == nil {
+			var payload struct {
+				Format struct {
+					FormatName string `json:"format_name"`
+				} `json:"format"`
+			}
+			if json.Unmarshal(output, &payload) == nil {
+				return strings.ToLower(payload.Format.FormatName)
+			}
+		}
+	}
+	return t.realContainerFFmpeg(ctx, file)
+}
+
+// realContainerFFmpeg reads the container from ffmpeg's "Input #0, <format>," line
+// when ffprobe is unavailable.
+func (t *Transcoder) realContainerFFmpeg(ctx context.Context, file string) string {
+	timeout, cancel := context.WithTimeout(ctx, 8*time.Second)
+	defer cancel()
+	output, _ := exec.CommandContext(timeout, t.ffmpeg, "-hide_banner", "-nostdin", "-i", file).CombinedOutput()
+	if match := ffmpegInputFormatPattern.FindStringSubmatch(string(output)); match != nil {
+		return strings.ToLower(strings.TrimSpace(match[1]))
+	}
+	return ""
+}
+
+// browserFileArgs builds the ffmpeg command that writes a browser-native MP4
+// (H.264/AAC) to outPath for local playback. Streams are copied when the codecs
+// already suit the browser and re-encoded otherwise; -movflags +faststart moves
+// the moov box to the front so a plain <video> element can start playback before
+// the whole file is downloaded, and the resulting file stays seekable.
+func (t *Transcoder) browserFileArgs(file string, info MediaInfo, outPath string) ([]string, error) {
+	if !t.Available() {
+		return nil, errors.New("ffmpeg is not installed")
+	}
+	args := []string{"-hide_banner", "-loglevel", "error", "-nostdin", "-y", "-i", file}
+	// Subtitles and attachments are dropped: a failed "-c copy" of an .ass track
+	// would abort the whole job, and the browser cannot show them anyway.
+	args = append(args, "-sn", "-dn", "-map_metadata", "-1")
+
+	copyVideo := !info.HasVideo() || codecIn(info.VideoCodec, safeVideoCodecs)
+	copyAudio := info.AudioCodec == "" || codecIn(info.AudioCodec, safeAudioCodecs)
+
+	if !info.HasVideo() {
+		args = append(args, "-c:a", "aac", "-b:a", "192k")
+	} else if copyVideo && copyAudio {
+		// The usual case for an MPEG-TS lesson: the streams are untouched, only
+		// the container is rewritten - a few percent of one CPU core.
+		args = append(args, "-c:v", "copy", "-c:a", "copy")
+		if info.AudioCodec == "aac" {
+			// AAC inside MPEG-TS is ADTS framed; MP4 wants the ASC form, so the
+			// bitstream filter must run or the muxer rejects the audio packets.
+			args = append(args, "-bsf:a", "aac_adtstoasc")
+		}
+	} else {
+		args = append(args, "-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p")
+		if copyAudio {
+			args = append(args, "-c:a", "copy")
+			if info.AudioCodec == "aac" {
+				args = append(args, "-bsf:a", "aac_adtstoasc")
+			}
+		} else {
+			args = append(args, "-c:a", "aac", "-b:a", "192k")
+		}
+	}
+	args = append(args, "-f", "mp4", "-movflags", "+faststart", outPath)
+	return args, nil
+}
+
+// browserCachePath returns the path of the remuxed MP4 for file: a stable name
+// derived from its absolute path, so concurrent requests for the same lesson
+// share one job and a finished conversion is reused on the next play.
+func (t *Transcoder) browserCachePath(file string) string {
+	sum := sha1.Sum([]byte(filepath.Clean(file)))
+	return filepath.Join(t.cacheDir, fmt.Sprintf("%x.mp4", sum))
+}
+
+// ensureBrowserCache transcodes file into a browser-native MP4 (or reuses a
+// still-valid one) and returns that path. The cached file tracks the source's
+// modification time, so editing the lesson invalidates it automatically.
+func (t *Transcoder) ensureBrowserCache(r *http.Request, file string, info MediaInfo) (string, error) {
+	cachePath := t.browserCachePath(file)
+	source, err := os.Stat(file)
+	if err != nil {
+		return "", err
+	}
+	if cached, err := os.Stat(cachePath); err == nil && !source.ModTime().After(cached.ModTime()) {
+		return cachePath, nil
+	}
+	_ = os.Remove(cachePath)
+
+	tmp, err := os.CreateTemp(t.cacheDir, "browser-*.mp4.tmp")
+	if err != nil {
+		return "", err
+	}
+	tmpName := tmp.Name()
+	tmp.Close()
+	// On any failure the partial file is removed so a later request retries.
+	defer os.Remove(tmpName)
+
+	args, err := t.browserFileArgs(file, info, tmpName)
+	if err != nil {
+		return "", err
+	}
+	command := exec.CommandContext(r.Context(), t.ffmpeg, args...)
+	diagnostics := &limitedBuffer{limit: 4096}
+	command.Stderr = diagnostics
+	if err := command.Run(); err != nil {
+		message := strings.TrimSpace(diagnostics.String())
+		if message == "" {
+			message = err.Error()
+		}
+		return "", fmt.Errorf("ffmpeg could not convert this file: %s", message)
+	}
+	if err := os.Rename(tmpName, cachePath); err != nil {
+		return "", err
+	}
+	return cachePath, nil
+}
+
+// ensureFFmpeg procures ffmpeg (and ffprobe) on demand when the runtime has none.
+// It runs at most once and is cross-platform: it downloads the static build for
+// the current OS/arch (Windows, Linux amd64/arm64/arm, macOS) into the cache
+// directory, which makes local browser playback and casting work out of the box
+// even on an ARM NAS box (e.g. fnOS/飞牛OS) whose image does not ship ffmpeg. When
+// ffmpeg is already installed (on PATH, via OFFLINEU_FFMPEG, or bundled in a Docker
+// image) this is a no-op. Failures are logged and ignored - OfflineU then keeps
+// serving the original bytes, exactly as it did before ffmpeg was involved. Set
+// OFFLINEU_NO_AUTOFFMPEG=1 to disable the download entirely.
+func (t *Transcoder) ensureFFmpeg() {
+	t.autoMu.Lock()
+	defer t.autoMu.Unlock()
+	if t.autoDone {
+		return
+	}
+	t.autoDone = true
+	if t.Available() {
+		return
+	}
+	if os.Getenv(EnvNoAutoFFmpeg) != "" {
+		return
+	}
+	ffmpegPath, ffprobePath, err := t.downloadFFmpeg()
+	if err != nil {
+		logf("transcoder: ffmpeg auto-download failed, local remux disabled: %v", err)
+		return
+	}
+	t.ffmpeg = ffmpegPath
+	t.ffprobe = ffprobePath
+	logf("transcoder: ffmpeg fetched for local playback (%s; ffprobe=%s)", ffmpegPath, ffprobePath)
+}
+
+// ffmpegStaticAssets returns the eugeneware/ffmpeg-static asset names for the
+// running OS/arch (ffmpeg and, when available, ffprobe), or "" when no prebuilt
+// binary is offered.
+func ffmpegStaticAssets() (string, string) {
+	switch runtime.GOOS {
+	case "windows":
+		return "ffmpeg-win32-x64", "ffprobe-win32-x64"
+	case "linux":
+		switch runtime.GOARCH {
+		case "arm64":
+			return "ffmpeg-linux-arm64", "ffprobe-linux-arm64"
+		case "arm":
+			return "ffmpeg-linux-arm", "ffprobe-linux-arm"
+		default:
+			return "ffmpeg-linux-x64", "ffprobe-linux-x64"
+		}
+	case "darwin":
+		if runtime.GOARCH == "arm64" {
+			return "ffmpeg-darwin-arm64", "ffprobe-darwin-arm64"
+		}
+		return "ffmpeg-darwin-x64", "ffprobe-darwin-x64"
+	}
+	return "", ""
+}
+
+// downloadFFmpeg fetches the static ffmpeg (and ffprobe) build for this platform
+// once and saves them into cacheDir/ffmpeg. A previously downloaded copy is reused
+// without hitting the network again. A missing ffprobe download is not fatal: the
+// caller falls back to "ffmpeg -i" for probing.
+func (t *Transcoder) downloadFFmpeg() (string, string, error) {
+	ffmpegAsset, ffprobeAsset := ffmpegStaticAssets()
+	if ffmpegAsset == "" {
+		return "", "", fmt.Errorf("no bundled ffmpeg build for %s/%s", runtime.GOOS, runtime.GOARCH)
+	}
+	dir := filepath.Join(t.cacheDir, "ffmpeg")
+	_ = os.MkdirAll(dir, 0o755)
+
+	ffmpegPath := filepath.Join(dir, ffmpegAsset)
+	ffprobePath := ""
+	if ffprobeAsset != "" {
+		ffprobePath = filepath.Join(dir, ffprobeAsset)
+	}
+	if runtime.GOOS == "windows" {
+		// The assets ship without an extension; keep the conventional .exe locally.
+		ffmpegPath += ".exe"
+		if ffprobePath != "" {
+			ffprobePath += ".exe"
+		}
+	}
+
+	if _, err := os.Stat(ffmpegPath); err == nil {
+		return ffmpegPath, ffprobePath, nil
+	}
+
+	logf("transcoder: downloading ffmpeg for local playback (one time)...")
+	if err := downloadFile(ffmpegStaticBase+"/"+ffmpegAsset, ffmpegPath); err != nil {
+		return "", "", err
+	}
+	if ffprobePath != "" {
+		if err := downloadFile(ffmpegStaticBase+"/"+ffprobeAsset, ffprobePath); err != nil {
+			logf("transcoder: ffprobe download failed, falling back to ffmpeg -i: %v", err)
+			ffprobePath = ""
+		}
+	}
+	return ffmpegPath, ffprobePath, nil
+}
+
+// downloadFile streams url into dest, creating (or truncating) the file and making
+// it executable on non-Windows platforms.
+func downloadFile(url, dest string) error {
+	request, err := http.NewRequest(http.MethodGet, url, nil)
+	if err != nil {
+		return err
+	}
+	client := &http.Client{Timeout: 10 * time.Minute}
+	response, err := client.Do(request)
+	if err != nil {
+		return err
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		return fmt.Errorf("download returned HTTP %d", response.StatusCode)
+	}
+	out, err := os.OpenFile(dest, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o755)
+	if err != nil {
+		return err
+	}
+	if _, err := io.Copy(out, response.Body); err != nil {
+		out.Close()
+		return err
+	}
+	if err := out.Close(); err != nil {
+		return err
+	}
+	if runtime.GOOS != "windows" {
+		if err := os.Chmod(dest, 0o755); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// ServeBrowser adapts a media file to what a browser can actually play. Files
+// whose real container matches their extension (or is otherwise browser-native)
+// are served with the correct MIME; files in an unplayable container (MPEG-TS,
+// MKV, AVI, …) are repackaged to a seekable MP4 and served via http.ServeContent,
+// so the browser can both play from the start and seek. It returns true when it
+// wrote the response, false when the caller should fall back to serving the raw
+// bytes - which happens without ffmpeg, when the container is unreadable, or if
+// ffmpeg fails to convert the file.
+func (t *Transcoder) ServeBrowser(w http.ResponseWriter, r *http.Request, file string) bool {
+	// Make sure ffmpeg is available before we decide anything; on a runtime that
+	// has none this downloads the static build for the current OS/arch (Windows,
+	// Linux amd64/arm64, macOS) - that is what lets an ARM NAS box like fnOS/飞牛OS
+	// repackage lessons for the browser without ffmpeg preinstalled.
+	t.ensureFFmpeg()
+	container := t.realContainer(r.Context(), file)
+	if container == "" {
+		// Still unreadable even after ffmpeg is in place: give up and let the
+		// caller serve the raw bytes.
+		return false
+	}
+	if container == "" {
+		return false
+	}
+	if browserFriendlyContainer(container) {
+		if mime := containerMime(container); mime != "" {
+			serveCourseFile(w, r, file, mime)
+			return true
+		}
+		return false
+	}
+	if !t.Available() {
+		return false
+	}
+	info, _ := t.Probe(r.Context(), file)
+	cachePath, err := t.ensureBrowserCache(r, file, info)
+	if err != nil {
+		logf("browser: remux failed for %s: %v", filepath.Base(file), err)
+		return false
+	}
+	mime := "video/mp4"
+	if !info.HasVideo() {
+		mime = "audio/mp4"
+	}
+	serveCourseFile(w, r, cachePath, mime)
+	return true
 }

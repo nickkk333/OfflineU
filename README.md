@@ -216,16 +216,19 @@ Because the conversion happens while streaming, the resume position is given to 
 (the device cannot seek in a live stream), subtitles and attachments are dropped, and the process
 dies the moment the device stops or disconnects.
 
-ffmpeg is an **optional helper, not a dependency** — without it OfflineU keeps casting the
-original file, exactly as before, and the cast menu says so when a lesson would need converting:
+ffmpeg does the heavy lifting for both **browser playback** and **casting**: it repackages a lesson a
+browser or a renderer would otherwise refuse — a mislabeled `.mp4` that is really MPEG-TS, or an `.mkv`,
+becomes a browser-native MP4; an `.mkv` bound for a TV becomes MPEG-TS. Without it OfflineU can only hand
+the original file to the client, which then fails to play it.
 
-* local run: install ffmpeg, or point `OFFLINEU_FFMPEG` / `OFFLINEU_FFPROBE` at it;
-* Docker: the image already contains ffmpeg. To build one without it (~90 MB smaller, casting
-  then hands over the original file):
-  ```bash
-  docker build --build-arg INSTALL_FFMPEG=false -t offlineu .
-  ```
-  (`docker-compose.yml`: `build: { args: { INSTALL_FFMPEG: "false" } }`.)
+* Docker: the image **always** bundles ffmpeg (no build flag needed) — a ~90 MB bigger image, but every
+  lesson plays, both in the browser and on the TV.
+* local run (any OS/arch, incl. an ARM NAS like fnOS/飞牛OS): OfflineU auto-downloads a static ffmpeg
+  on first play when none is found on the machine - this covers Windows, Linux amd64/arm64 and macOS, so
+  a box whose image does not ship ffmpeg still plays lessons; alternatively point `OFFLINEU_FFMPEG` /
+  `OFFLINEU_FFPROBE` at an existing install, or set `OFFLINEU_NO_AUTOFFMPEG=1` to disable the download.
+  (The auto-downloaded build fetches both ffmpeg and ffprobe; if ffprobe cannot be fetched, OfflineU still
+  detects containers and codecs with `ffmpeg -i`.)
 
 **Compatibility mode** in the cast menu is pre-set to what the server worked out for the lesson
 (`/api/lesson` returns `cast_plan: {needs_transcode, transcode_available, reason}`) and can be

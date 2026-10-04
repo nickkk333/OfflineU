@@ -1142,6 +1142,24 @@ func (a *App) handleFile(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	// Media files whose real container does not match a browser-friendly one
+	// (for example an .mp4 that is actually an MPEG-TS stream) are repackaged to
+	// a playable MP4 on the fly, or served with the correct MIME when the
+	// extension merely lied about an otherwise native container. Without ffmpeg
+	// this step is skipped and the bytes are served exactly as before.
+	extension := strings.ToLower(filepath.Ext(full))
+	if extIn(extension, videoExtensions) || extIn(extension, audioExtensions) {
+		if a.Transcoder != nil && a.Transcoder.ServeBrowser(w, r, full) {
+			return
+		}
+	}
+	serveCourseFile(w, r, full, GuessMime(full, "application/octet-stream"))
+}
+
+// serveCourseFile streams a course file to the browser with the given MIME and
+// full Range support (the standard path used for everything that is served as
+// is, including the bytes ServeBrowser falls back to).
+func serveCourseFile(w http.ResponseWriter, r *http.Request, full, mime string) {
 	handle, err := os.Open(full)
 	if err != nil {
 		http.Error(w, "File not found", http.StatusNotFound)
@@ -1153,7 +1171,7 @@ func (a *App) handleFile(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "File not found", http.StatusNotFound)
 		return
 	}
-	w.Header().Set("Content-Type", GuessMime(full, "application/octet-stream"))
+	w.Header().Set("Content-Type", mime)
 	http.ServeContent(w, r, filepath.Base(full), info.ModTime(), handle)
 }
 

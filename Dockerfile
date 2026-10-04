@@ -42,15 +42,12 @@ FROM alpine:3.21
 # time, and getcap stays in the image so the state can be inspected later with
 # "docker exec <container> getcap /app/offlineu-cap".
 #
-# INSTALL_FFMPEG adds ffmpeg/ffprobe, which casting uses to repackage (or
-# re-encode) a lesson a renderer would otherwise refuse - an .mkv becomes an
-# MPEG-TS stream on the fly. It costs ~90 MB and is on by default, because a
-# cast that stops at "unsupported format" is worse than a bigger image:
-#   docker build --build-arg INSTALL_FFMPEG=false -t offlineu .   # to leave it out
-# Without it OfflineU keeps handing the original file to the device.
-ARG INSTALL_FFMPEG=true
-RUN apk add --no-cache ca-certificates libcap \
-    && if [ "$INSTALL_FFMPEG" = "true" ]; then apk add --no-cache ffmpeg; fi \
+# ffmpeg/ffprobe are bundled unconditionally: the server repackages lessons a
+# browser or a renderer would otherwise refuse (an .mkv or MPEG-TS becomes a
+# browser-native MP4 on the fly), so a viewer that stops at "unsupported format"
+# is worse than a ~90 MB bigger image. Without it OfflineU can only hand the
+# original file to the client, which then fails to play it.
+RUN apk add --no-cache ca-certificates libcap ffmpeg \
     && adduser -D -u 10001 -h /app offlineu
 
 WORKDIR /app
