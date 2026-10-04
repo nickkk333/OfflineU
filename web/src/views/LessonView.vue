@@ -141,6 +141,11 @@ async function load(path) {
     completed.value = Boolean(data.lesson.completed)
     warningShown = false
     savingEnabled = true
+    // The media element lives in the v-else-if branch that is hidden while
+    // loading is true, so it is not in the DOM until here: flip loading off and
+    // let Vue render the player before we ever touch mediaEl, otherwise the
+    // resume position and - for autoplay - media.play() are skipped.
+    loading.value = false
     await nextTick()
     initialisePlayer()
     loadTextResources()
