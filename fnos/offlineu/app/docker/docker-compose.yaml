@@ -1,11 +1,12 @@
 # fnOS 应用中心安装后会直接执行本 compose 来启停应用。
-# 仅需把镜像 ghcr.io/nickkk333/offlineu:main 跑起来，端口 5000 对外。
+# 镜像在本地构建（见 fnos/build-local.ps1）并打成本地 tag offlineu:local，
+# 不依赖任何远程仓库/CI；首次安装前需先把该镜像导入 fnOS（见 README）。
 # 课程库挂载在 ./courses（只读），进度数据在 ./data。
 services:
   offlineu:
-    image: ghcr.io/nickkk333/offlineu:main
+    image: offlineu:local
     container_name: offlineu
-    pull_policy: always
+    pull_policy: never
     # 以 root 运行，避免 NAS 上课程目录的权限问题（镜像内已做能力降级处理）。
     user: "0:0"
     environment:
