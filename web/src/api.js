@@ -51,18 +51,24 @@ export const api = {
   castDevices: (refresh) => request(`/api/dlna/devices${refresh ? '?refresh=1' : ''}`),
   // converted === true asks the server to repackage/re-encode the file on the
   // fly (ffmpeg), which is what a TV needs for .mkv and friends.
-  castTo: (device, lessonPath, startSeconds, converted) =>
+  // duration is what the browser measured while reading the file; the server
+  // needs a length to know when the cast ended (and to continue).
+  castTo: (device, lessonPath, startSeconds, converted, autoplay, duration) =>
     request('/api/dlna/cast', {
       method: 'POST',
       body: JSON.stringify({
         device,
         lesson_path: lessonPath,
         start_seconds: Math.floor(startSeconds || 0),
-        transcode: converted ? 'on' : 'off'
+        transcode: converted ? 'on' : 'off',
+        autoplay: autoplay !== false,
+        duration: Math.floor(duration || 0)
       })
     }),
   castControl: (device, action) =>
-    request('/api/dlna/control', { method: 'POST', body: JSON.stringify({ device, action }) })
+    request('/api/dlna/control', { method: 'POST', body: JSON.stringify({ device, action }) }),
+  // Where the TV currently is - the browser polls this to follow the cast.
+  castSession: () => request('/api/dlna/session')
 }
 
 // Builds the SPA route of a lesson ("Section 1/01 - Intro.mp4/Intro").

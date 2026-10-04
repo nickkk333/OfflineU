@@ -4,6 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 import TypeIcon from '../components/TypeIcon.vue'
 import LanguageSwitch from '../components/LanguageSwitch.vue'
 import CastMenu from '../components/CastMenu.vue'
+import CastBar from '../components/CastBar.vue'
 import { api, formatTime, lessonRoute } from '../api.js'
 import { t, translateServerMessage } from '../i18n.js'
 import { useToast } from '../composables/useToast.js'
@@ -45,6 +46,49 @@ const mediaEl = ref(null)
 const autoplayEnabled = ref(readPreference(AUTOPLAY_KEY, '1') !== '0')
 const playbackRate = ref(parseFloat(readPreference(RATE_KEY, '1')) || 1)
 
+// The cast that is running on a TV: the browser follows it, and the server
+// pushes the next lesson when this one ends.
+const CAST_POLL_MS = 1500
+const castSession = ref(null)
+let castTimer = 0
+let castEndedHandled = false
+
+async function refreshCast() {
+  try {
+    const data = await api.castSession()
+    castSession.value = data && data.active ? data : null
+    followCast(data)
+    // The TV finished the lesson: reload so the completion mark and the
+    // progress counters of this page match what was stored.
+    if (data && data.active && data.state === 'ended' && !castEndedHandled) {
+      castEndedHandled = true
+      if (lesson.value && !lesson.value.completed) load(lesson.value.rel_path)
+    }
+  } catch {
+    castSession.value = null
+  }
+}
+
+// When the TV moves on to the next lesson, the page moves with it.
+function followCast(data) {
+  if (!data || !data.active || !data.lesson_url) return
+  if (!lesson.value || data.lesson_path === lesson.value.rel_path) return
+  // No currentPath update here: the route change below has to load the lesson.
+  router.push(lessonRoute(data.lesson_url))
+}
+
+function startCastPolling() {
+  refreshCast()
+  if (!castTimer) castTimer = window.setInterval(refreshCast, CAST_POLL_MS)
+}
+
+function stopCastPolling() {
+  if (castTimer) {
+    window.clearInterval(castTimer)
+    castTimer = 0
+  }
+}
+
 const RATES = [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2]
 const isMedia = computed(() => Boolean(lesson.value && (lesson.value.video_file || lesson.value.audio_file)))
 const positionLabel = computed(() =>
@@ -70,6 +114,7 @@ async function load(path) {
   loading.value = true
   error.value = ''
   textContents.value = {}
+  castEndedHandled = false
   try {
     const data = await api.lesson(path, route.query.autoplay === '1')
     payload.value = data
@@ -239,11 +284,14 @@ onMounted(() => {
   const initial = route.params.lessonPath
   load(Array.isArray(initial) ? initial.join('/') : initial || '')
   window.addEventListener('keydown', onKeydown)
+  // A cast started on another page (or before a reload) shows up here too.
+  startCastPolling()
 })
 
 onBeforeUnmount(() => {
   window.removeEventListener('keydown', onKeydown)
   window.clearTimeout(advanceTimer)
+  stopCastPolling()
 })
 </script>
 
@@ -296,6 +344,12 @@ onBeforeUnmount(() => {
       </div>
 
       <section v-if="isMedia" class="card lesson-view__player">
+        <CastBar
+          v-if="castSession && castSession.lesson_path === lesson.rel_path"
+          :session="castSession"
+          @refresh="refreshCast"
+          @ended="refreshCast"
+        />
         <div class="player-toolbar">
           <label class="toolbar-field">
             <span class="faint">{{ t('lesson.speed') }}</span>
@@ -319,6 +373,8 @@ onBeforeUnmount(() => {
             :lesson="lesson"
             :enabled="payload.dlna_enabled !== false"
             :plan="payload.cast_plan || {}"
+            :autoplay="autoplayEnabled"
+            @casted="refreshCast"
           />
         </div>
 

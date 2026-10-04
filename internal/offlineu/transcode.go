@@ -24,7 +24,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -52,8 +54,9 @@ const (
 
 // MediaInfo is what ffprobe tells us about a lesson file.
 type MediaInfo struct {
-	VideoCodec string `json:"video_codec,omitempty"`
-	AudioCodec string `json:"audio_codec,omitempty"`
+	VideoCodec string  `json:"video_codec,omitempty"`
+	AudioCodec string  `json:"audio_codec,omitempty"`
+	Duration   float64 `json:"duration,omitempty"` // seconds, 0 when unknown
 }
 
 // HasVideo reports whether the file carries a video stream.
@@ -112,18 +115,24 @@ func executableSuffix() string {
 	return ""
 }
 
-// Probe reads the codecs of a media file with ffprobe.
+// Probe reads the codecs and the duration of a media file. ffprobe is the first
+// choice; a lone ffmpeg binary (no ffprobe next to it) is asked to print the
+// same facts with "-i", so a cast still knows when a lesson ends.
 func (t *Transcoder) Probe(ctx context.Context, file string) (MediaInfo, error) {
 	if !t.Available() {
 		return MediaInfo{}, errors.New("ffmpeg is not installed")
 	}
 	if t.ffprobe == "" {
-		return MediaInfo{}, errors.New("ffprobe is not installed")
+		info := t.probeWithFFmpeg(ctx, file)
+		if info.VideoCodec == "" && info.AudioCodec == "" && info.Duration <= 0 {
+			return MediaInfo{}, errors.New("ffprobe is not installed and ffmpeg could not read the file")
+		}
+		return info, nil
 	}
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	output, err := exec.CommandContext(ctx, t.ffprobe,
-		"-v", "quiet", "-print_format", "json", "-show_streams", file).Output()
+		"-v", "quiet", "-print_format", "json", "-show_streams", "-show_format", file).Output()
 	if err != nil {
 		return MediaInfo{}, fmt.Errorf("ffprobe failed: %w", err)
 	}
@@ -132,6 +141,9 @@ func (t *Transcoder) Probe(ctx context.Context, file string) (MediaInfo, error) 
 			CodecType string `json:"codec_type"`
 			CodecName string `json:"codec_name"`
 		} `json:"streams"`
+		Format struct {
+			Duration string `json:"duration"`
+		} `json:"format"`
 	}
 	if err := json.Unmarshal(output, &payload); err != nil {
 		return MediaInfo{}, fmt.Errorf("cannot read the ffprobe output: %w", err)
@@ -156,7 +168,72 @@ func (t *Transcoder) Probe(ctx context.Context, file string) (MediaInfo, error) 
 	if info.VideoCodec == "" && info.AudioCodec == "" {
 		return MediaInfo{}, errors.New("no audio or video stream found")
 	}
+	info.Duration = parseDurationSeconds(payload.Format.Duration)
+	if info.Duration <= 0 {
+		// Some files carry no duration in the format section.
+		if fallback := t.probeWithFFmpeg(ctx, file); fallback.Duration > 0 {
+			info.Duration = fallback.Duration
+		}
+	}
 	return info, nil
+}
+
+// probeWithFFmpeg asks ffmpeg itself what is inside the file. Without an output
+// file ffmpeg exits with an error, but it prints the header first - which is
+// exactly what this reads.
+func (t *Transcoder) probeWithFFmpeg(ctx context.Context, file string) MediaInfo {
+	if !t.Available() {
+		return MediaInfo{}
+	}
+	timeout, cancel := context.WithTimeout(ctx, 8*time.Second)
+	defer cancel()
+	output, _ := exec.CommandContext(timeout, t.ffmpeg, "-hide_banner", "-nostdin", "-i", file).CombinedOutput()
+	return parseFFmpegHeader(string(output))
+}
+
+var (
+	ffmpegStreamPattern   = regexp.MustCompile(`Stream #[^\n]*?: (Video|Audio): ([A-Za-z0-9_.-]+)`)
+	ffmpegDurationPattern = regexp.MustCompile(`Duration: (\d+):(\d{2}):(\d{2})(?:\.(\d+))?`)
+)
+
+// parseFFmpegHeader lifts the codecs and the duration out of "ffmpeg -i".
+func parseFFmpegHeader(output string) MediaInfo {
+	info := MediaInfo{}
+	for _, match := range ffmpegStreamPattern.FindAllStringSubmatch(output, -1) {
+		codec := strings.ToLower(match[2])
+		switch strings.ToLower(match[1]) {
+		case "video":
+			if info.VideoCodec == "" {
+				info.VideoCodec = codec
+			}
+		case "audio":
+			if info.AudioCodec == "" {
+				info.AudioCodec = codec
+			}
+		}
+	}
+	if match := ffmpegDurationPattern.FindStringSubmatch(output); match != nil {
+		hours, _ := strconv.Atoi(match[1])
+		minutes, _ := strconv.Atoi(match[2])
+		seconds, _ := strconv.Atoi(match[3])
+		info.Duration = float64(hours*3600 + minutes*60 + seconds)
+		if match[4] != "" {
+			if fraction, err := strconv.ParseFloat("0."+match[4], 64); err == nil {
+				info.Duration += fraction
+			}
+		}
+	}
+	return info
+}
+
+// parseDurationSeconds reads the "123.456" ffprobe prints for a duration.
+// A live stream or a half broken file reports "N/A" and becomes 0 (unknown).
+func parseDurationSeconds(raw string) float64 {
+	value, err := strconv.ParseFloat(strings.TrimSpace(raw), 64)
+	if err != nil || value <= 0 {
+		return 0
+	}
+	return value
 }
 
 // Plan decides whether casting a file needs a converted stream. The container

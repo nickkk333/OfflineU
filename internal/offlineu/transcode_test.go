@@ -285,6 +285,39 @@ func TestLessonPayloadCarriesTheCastPlan(t *testing.T) {
 	}
 }
 
+func TestParseFFmpegHeaderReadsCodecsAndDuration(t *testing.T) {
+	header := "Input #0, matroska,webm, from 'lesson.mkv':\n" +
+		"  Metadata:\n    ENCODER : Lavf60.16.100\n" +
+		"  Duration: 00:10:05.50, start: 0.000000, bitrate: 2048 kb/s\n" +
+		"  Stream #0:0(eng): Video: h264 (High), yuv420p(progressive), 1920x1080, 25 fps\n" +
+		"  Stream #0:1(eng): Audio: aac (LC), 44100 Hz, stereo, fltp\n" +
+		"  Stream #0:2(eng): Subtitle: ass\n" +
+		"At least one output file must be specified\n"
+
+	info := parseFFmpegHeader(header)
+	if info.VideoCodec != "h264" || info.AudioCodec != "aac" {
+		t.Errorf("codecs = %+v", info)
+	}
+	if info.Duration != 605.5 {
+		t.Errorf("duration = %v, want 605.5", info.Duration)
+	}
+	// Subtitles are not what this reads.
+	if info.VideoCodec == "ass" {
+		t.Error("the subtitle stream was mistaken for a video codec")
+	}
+	if got := parseFFmpegHeader("ffmpeg version 6.0"); got.Duration != 0 || got.VideoCodec != "" {
+		t.Errorf("output without a header = %+v", got)
+	}
+}
+
+func TestProbeFallsBackToFFmpegWithoutFFprobe(t *testing.T) {
+	// A lone ffmpeg (no ffprobe next to it) still has to answer.
+	transcoder := &Transcoder{ffmpeg: "definitely-not-ffmpeg"}
+	if info, err := transcoder.Probe(context.Background(), "lesson.mkv"); err == nil {
+		t.Errorf("a missing ffmpeg should fail, got %+v", info)
+	}
+}
+
 func TestLimitedBufferKeepsTheFirstBytes(t *testing.T) {
 	buffer := &limitedBuffer{limit: 8}
 	if _, err := buffer.Write([]byte("diagnostics that go on and on")); err != nil {

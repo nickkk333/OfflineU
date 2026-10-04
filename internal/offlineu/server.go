@@ -28,6 +28,11 @@ type App struct {
 	DLNA       *DLNAHub
 	Transcoder *Transcoder
 
+	// cast is the lesson currently playing on a renderer, if any: the browser
+	// polls it to show the position and the watchdog continues with the next
+	// lesson when it ends.
+	cast castLock
+
 	web      fs.FS
 	index    []byte
 	hasIndex bool
@@ -88,6 +93,8 @@ func (a *App) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		a.handleDLNACast(w, r)
 	case requestPath == "/api/dlna/stream":
 		a.handleDLNAStream(w, r)
+	case requestPath == "/api/dlna/session":
+		a.handleDLNASession(w, r)
 	case requestPath == "/api/dlna/control":
 		a.handleDLNAControl(w, r)
 	case requestPath == "/reset_course":
@@ -685,10 +692,12 @@ func (a *App) handleDLNACast(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var payload struct {
-		Device       string `json:"device"`
-		LessonPath   string `json:"lesson_path"`
-		StartSeconds *int   `json:"start_seconds"`
-		Transcode    string `json:"transcode"` // "auto" (default), "on" or "off"
+		Device       string  `json:"device"`
+		LessonPath   string  `json:"lesson_path"`
+		StartSeconds *int    `json:"start_seconds"`
+		Transcode    string  `json:"transcode"` // "auto" (default), "on" or "off"
+		Autoplay     *bool   `json:"autoplay"`  // continue with the next lesson (default: true)
+		Duration     float64 `json:"duration"`  // length the browser worked out (optional)
 	}
 	if err := decodeJSON(r, &payload); err != nil {
 		writeError(w, http.StatusBadRequest, "device and lesson_path are required")
@@ -707,7 +716,8 @@ func (a *App) handleDLNACast(w http.ResponseWriter, r *http.Request) {
 	if payload.StartSeconds != nil && *payload.StartSeconds > 0 {
 		startSeconds = *payload.StartSeconds
 	}
-	target, hasMedia, err := a.castTarget(r, course, lesson, payload.Transcode, startSeconds)
+	baseURL := a.absoluteURL(r, "")
+	target, hasMedia, err := a.castTarget(baseURL, course, lesson, payload.Transcode, startSeconds)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -731,13 +741,85 @@ func (a *App) handleDLNACast(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadGateway, err.Error())
 		return
 	}
+
+	// Exactly what opening a lesson in the browser does: the resume card and
+	// the "continue where you left off" entry follow the cast too.
+	if _, err := a.Progress.RecordAccess(course, lesson.RelPath); err != nil {
+		logf("dlna: cannot record the cast: %v", err)
+	}
+
+	// Remember what is playing: the browser shows the position and the
+	// watchdog hands the next lesson over when this one ends.
+	session := &CastSession{
+		UDN:          renderer.UDN,
+		Device:       renderer.DisplayName(),
+		CoursePath:   course.Path,
+		LessonPath:   lesson.RelPath,
+		LessonURL:    lesson.URL,
+		LessonTitle:  lesson.Title,
+		BaseURL:      baseURL,
+		Converted:    target.Converted,
+		Autoplay:     payload.Autoplay == nil || *payload.Autoplay,
+		MediaFile:    a.mediaFileFor(course, lesson),
+		StartSeconds: float64(startSeconds),
+		Duration:     a.castDuration(course, lesson, payload.Duration),
+		StartedAt:    time.Now(),
+		State:        CastStatePlaying,
+	}
+	a.beginCast(session)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"success":   true,
 		"device":    renderer.DisplayName(),
 		"title":     target.Item.Title,
 		"url":       target.Item.URL,
 		"converted": target.Converted,
+		"session":   a.castSnapshot(),
 	})
+}
+
+// castDuration is how long the lesson plays. Without it the cast can never tell
+// that a lesson ended (and would neither mark it completed nor continue), so
+// three sources are tried in order: ffprobe/ffmpeg, the length the browser
+// measured while loading the file, and - later, while playing - whatever the
+// device itself reports (see CastSession.RealPosition).
+func (a *App) castDuration(course *Course, lesson *Lesson, fromBrowser float64) float64 {
+	if fromBrowser > 0 {
+		return fromBrowser
+	}
+	if file := a.mediaFileFor(course, lesson); file != "" {
+		if duration := a.mediaDuration(file); duration > 0 {
+			return duration
+		}
+	}
+	return 0
+}
+
+// mediaDuration asks ffprobe (or ffmpeg) how long a file plays; 0 means
+// "unknown".
+func (a *App) mediaDuration(file string) float64 {
+	if file == "" || !a.Transcoder.Available() {
+		return 0
+	}
+	ctx, cancel := probeContext()
+	defer cancel()
+	info, err := a.Transcoder.Probe(ctx, file)
+	if err != nil {
+		return 0
+	}
+	return info.Duration
+}
+
+// handleDLNASession reports the running cast: where the device is, how long the
+// lesson is and which lesson comes next.
+func (a *App) handleDLNASession(w http.ResponseWriter, r *http.Request) {
+	if !requireMethod(w, r, http.MethodGet) {
+		return
+	}
+	if !a.Config.DLNAEnabled {
+		writeError(w, http.StatusForbidden, "dlna is disabled")
+		return
+	}
+	writeJSON(w, http.StatusOK, a.castSnapshot())
 }
 
 // castTarget is what a cast actually pushes: either the lesson file itself or,
@@ -750,7 +832,7 @@ type castTarget struct {
 // castTarget builds the media of one lesson. mode is "auto" (convert when the
 // container or the codecs need it), "on" (always convert) or "off" (never
 // convert - hand over the file, which is what OfflineU always did).
-func (a *App) castTarget(r *http.Request, course *Course, lesson *Lesson, mode string, startSeconds int) (castTarget, bool, error) {
+func (a *App) castTarget(baseURL string, course *Course, lesson *Lesson, mode string, startSeconds int) (castTarget, bool, error) {
 	relative, mime, class := lesson.VideoFile, lesson.VideoMime, "object.item.videoItem"
 	if relative == "" {
 		relative, mime, class = lesson.AudioFile, lesson.AudioMime, "object.item.audioItem.musicTrack"
@@ -774,14 +856,20 @@ func (a *App) castTarget(r *http.Request, course *Course, lesson *Lesson, mode s
 	case "off":
 		file = "" // fall through to the plain file
 	default:
-		if file == "" || !a.Transcoder.Available() || !a.Transcoder.Plan(r.Context(), file).NeedsTranscode {
+		needs := false
+		if file != "" && a.Transcoder.Available() {
+			ctx, cancel := probeContext()
+			needs = a.Transcoder.Plan(ctx, file).NeedsTranscode
+			cancel()
+		}
+		if !needs {
 			file = ""
 		}
 	}
 	if file == "" {
 		return castTarget{Item: MediaItem{
 			Title: title,
-			URL:   a.absoluteURL(r, fileURL("/files/", relative)),
+			URL:   baseURL + fileURL("/files/", relative),
 			Mime:  mime,
 			Class: class,
 		}}, true, nil
@@ -800,7 +888,7 @@ func (a *App) castTarget(r *http.Request, course *Course, lesson *Lesson, mode s
 	return castTarget{
 		Item: MediaItem{
 			Title: title,
-			URL:   a.absoluteURL(r, "/api/dlna/stream?"+query.Encode()),
+			URL:   baseURL + "/api/dlna/stream?" + query.Encode(),
 			Mime:  streamMime,
 			Class: streamClass,
 		},
@@ -920,8 +1008,8 @@ func (a *App) handleDLNAControl(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	action := strings.ToLower(strings.TrimSpace(payload.Action))
-	if action != "play" && action != "pause" && action != "stop" {
-		writeError(w, http.StatusBadRequest, "action must be play, pause or stop")
+	if action != "play" && action != "pause" && action != "stop" && action != "next" {
+		writeError(w, http.StatusBadRequest, "action must be play, pause, stop or next")
 		return
 	}
 	renderer, ok := a.DLNA.Lookup(payload.Device)
@@ -929,14 +1017,58 @@ func (a *App) handleDLNAControl(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "the cast device was not found on the network")
 		return
 	}
-	if err := a.DLNA.Control(renderer, action); err != nil {
-		writeError(w, http.StatusBadGateway, err.Error())
-		return
+	session := a.currentCast()
+	if session != nil && session.UDN != renderer.UDN {
+		session = nil // the request is about another device than the one casting
+	}
+	switch action {
+	case "next":
+		if session == nil {
+			writeError(w, http.StatusBadRequest, "no cast is running on this device")
+			return
+		}
+		if err := a.castNext(session); err != nil {
+			writeError(w, http.StatusBadGateway, err.Error())
+			return
+		}
+	case "pause", "play":
+		if err := a.DLNA.Control(renderer, action); err != nil {
+			writeError(w, http.StatusBadGateway, err.Error())
+			return
+		}
+		a.cast.mutex.Lock()
+		if session != nil && !session.stopped {
+			if action == "pause" {
+				session.pause(time.Now())
+			} else {
+				session.resume(time.Now())
+			}
+		}
+		a.cast.mutex.Unlock()
+	case "stop":
+		if err := a.DLNA.Control(renderer, "stop"); err != nil {
+			writeError(w, http.StatusBadGateway, err.Error())
+			return
+		}
+		// Write the last position down before forgetting the cast.
+		a.cast.mutex.Lock()
+		if session != nil && !session.stopped {
+			position := session.estimate(time.Now())
+			if course := a.Store.Get(); course != nil && course.Path == session.CoursePath {
+				seconds := int(position)
+				if _, err := a.Progress.Update(course, session.LessonPath, nil, &seconds); err != nil {
+					logf("dlna: cannot save the cast progress: %v", err)
+				}
+			}
+		}
+		a.cast.mutex.Unlock()
+		a.endCast(session)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"success": true,
 		"device":  renderer.DisplayName(),
 		"action":  action,
+		"session": a.castSnapshot(),
 	})
 }
 

@@ -450,10 +450,89 @@ func didlMetadata(item MediaItem) string {
 	return builder.String()
 }
 
+// PositionInfo is the answer to GetPositionInfo: where the renderer really is
+// and what it is doing. A remote control in the living room changes both
+// without OfflineU noticing, so the cast session asks instead of guessing.
+type PositionInfo struct {
+	TrackDuration  float64 `json:"track_duration"`
+	RelTime        float64 `json:"rel_time"`
+	TransportState string  `json:"transport_state"`
+}
+
+type positionInfoResponse struct {
+	TrackDuration  string `xml:"TrackDuration"`
+	RelTime        string `xml:"RelTime"`
+	AbsTime        string `xml:"AbsTime"`
+	TransportState string `xml:"TransportState"`
+}
+
+type soapResponse struct {
+	XMLName xml.Name `xml:"Envelope"`
+	Body    struct {
+		PositionInfo *positionInfoResponse `xml:"GetPositionInfoResponse"`
+	} `xml:"Body"`
+}
+
+// Position asks a renderer where it is. It is best effort: plenty of devices
+// answer "NOT_IMPLEMENTED" or refuse the action, and the caller then falls back
+// to the time based estimate.
+func (h *DLNAHub) Position(renderer Renderer) (PositionInfo, error) {
+	client := h.client
+	if client == nil {
+		client = &http.Client{Timeout: dlnaActionTimeout}
+	}
+	body, err := renderer.callWithBody(client, "GetPositionInfo", [][2]string{{"InstanceID", "0"}})
+	if err != nil {
+		return PositionInfo{}, err
+	}
+	var decoded soapResponse
+	if err := xml.Unmarshal([]byte(body), &decoded); err != nil {
+		return PositionInfo{}, fmt.Errorf("cannot read the position answer: %w", err)
+	}
+	if decoded.Body.PositionInfo == nil {
+		return PositionInfo{}, errors.New("the renderer sent no position")
+	}
+	position := *decoded.Body.PositionInfo
+	info := PositionInfo{
+		TrackDuration:  parseClockSeconds(position.TrackDuration),
+		RelTime:        parseClockSeconds(position.RelTime),
+		TransportState: strings.ToUpper(strings.TrimSpace(position.TransportState)),
+	}
+	if info.TrackDuration <= 0 && info.RelTime <= 0 && info.TransportState == "" {
+		return PositionInfo{}, errors.New("the renderer reported no position")
+	}
+	return info, nil
+}
+
+// parseClockSeconds reads the H:MM:SS[.mmm] a renderer reports. Anything it
+// cannot express ("NOT_IMPLEMENTED", "0") becomes 0 = unknown.
+func parseClockSeconds(raw string) float64 {
+	value := strings.TrimSpace(raw)
+	if value == "" {
+		return 0
+	}
+	// Every field is the next smaller unit: "1:02:05" -> 1*3600 + 2*60 + 5.
+	total := 0.0
+	for _, part := range strings.Split(value, ":") {
+		number, err := strconv.ParseFloat(strings.TrimSpace(part), 64)
+		if err != nil {
+			return 0 // "NOT_IMPLEMENTED" and friends
+		}
+		total = total*60 + number
+	}
+	return total
+}
+
 // call sends one SOAP action to the renderer's control endpoint.
 func (r Renderer) call(client *http.Client, action string, args [][2]string) error {
+	_, err := r.callWithBody(client, action, args)
+	return err
+}
+
+// callWithBody is call() plus the response body, which GetPositionInfo needs.
+func (r Renderer) callWithBody(client *http.Client, action string, args [][2]string) (string, error) {
 	if strings.TrimSpace(r.ControlURL) == "" {
-		return errors.New("the renderer has no control URL")
+		return "", errors.New("the renderer has no control URL")
 	}
 	if client == nil {
 		client = &http.Client{Timeout: dlnaActionTimeout}
@@ -463,29 +542,29 @@ func (r Renderer) call(client *http.Client, action string, args [][2]string) err
 	defer cancel()
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, r.ControlURL, strings.NewReader(body))
 	if err != nil {
-		return err
+		return "", err
 	}
 	request.Header.Set("Content-Type", `text/xml; charset="utf-8"`)
 	request.Header.Set("SOAPACTION", `"`+r.ServiceType+"#"+action+`"`)
 
 	response, err := client.Do(request)
 	if err != nil {
-		return err
+		return "", err
 	}
 	defer response.Body.Close()
 	payload, err := io.ReadAll(io.LimitReader(response.Body, 1<<20))
 	if err != nil {
-		return err
+		return "", err
 	}
 	// Renderers report a refused action either as a SOAP fault inside a 200 or
 	// as a plain 500 carrying the same fault - both are worth decoding.
 	if message := soapFaultMessage(string(payload)); message != "" {
-		return errors.New(message)
+		return "", errors.New(message)
 	}
 	if response.StatusCode/100 != 2 {
-		return fmt.Errorf("HTTP %d", response.StatusCode)
+		return "", fmt.Errorf("HTTP %d", response.StatusCode)
 	}
-	return nil
+	return string(payload), nil
 }
 
 // soapEnvelope wraps the arguments of one action into a SOAP request body.

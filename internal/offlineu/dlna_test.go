@@ -18,6 +18,10 @@ type fakeRenderer struct {
 	bodies  []string
 	mutex   sync.Mutex
 	fault   bool
+	// what GetPositionInfo answers
+	positionSeconds int
+	durationSeconds int
+	transportState  string
 }
 
 const fakeDescription = `<?xml version="1.0"?>
@@ -54,7 +58,7 @@ const fakeDescription = `<?xml version="1.0"?>
 
 func newFakeRenderer(t *testing.T) *fakeRenderer {
 	t.Helper()
-	fake := &fakeRenderer{}
+	fake := &fakeRenderer{transportState: "PLAYING"}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/desc.xml", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", `text/xml; charset="utf-8"`)
@@ -70,9 +74,22 @@ func newFakeRenderer(t *testing.T) *fakeRenderer {
 		fake.actions = append(fake.actions, action)
 		fake.bodies = append(fake.bodies, string(body))
 		broken := fake.fault
+		position := fake.positionSeconds
+		duration := fake.durationSeconds
+		state := fake.transportState
 		fake.mutex.Unlock()
 
 		w.Header().Set("Content-Type", `text/xml; charset="utf-8"`)
+		if action == "GetPositionInfo" {
+			_, _ = io.WriteString(w, `<s:Envelope><s:Body><u:GetPositionInfoResponse `+
+				`xmlns:u="`+avTransportService+`">`+
+				`<TrackDuration>`+formatUPnPDuration(duration)+`</TrackDuration>`+
+				`<RelTime>`+formatUPnPDuration(position)+`</RelTime>`+
+				`<AbsTime>`+formatUPnPDuration(position)+`</AbsTime>`+
+				`<TransportState>`+state+`</TransportState>`+
+				`</u:GetPositionInfoResponse></s:Body></s:Envelope>`)
+			return
+		}
 		if broken {
 			w.WriteHeader(http.StatusInternalServerError)
 			_, _ = io.WriteString(w, `<s:Envelope><s:Body><s:Fault><detail><UPnPError>`+
@@ -118,6 +135,16 @@ func (f *fakeRenderer) setFault(broken bool) {
 	f.mutex.Lock()
 	defer f.mutex.Unlock()
 	f.fault = broken
+}
+
+// setPosition makes the device report where it is, the way a real renderer
+// answers GetPositionInfo.
+func (f *fakeRenderer) setPosition(position int, duration int, state string) {
+	f.mutex.Lock()
+	defer f.mutex.Unlock()
+	f.positionSeconds = position
+	f.durationSeconds = duration
+	f.transportState = state
 }
 
 // seedRenderers puts a renderer into the hub's cache, so the HTTP layer

@@ -161,6 +161,7 @@ stays scriptable:
 | GET    | `/api/dlna/devices`                     | Renderers found on the LAN (`?refresh=1` repeats the SSDP search) |
 | POST   | `/api/dlna/cast`                        | `{"device": "<udn>", "lesson_path": "...", "start_seconds": 30, "transcode": "auto"\|"on"\|"off"}` — push a lesson to a renderer; `converted` in the answer says whether a stream was used |
 | GET    | `/api/dlna/stream?lesson=<path>&start=30` | The converted stream (MPEG-TS / AAC) a renderer pulls while playing |
+| GET    | `/api/dlna/session`                     | The running cast: device, lesson, position/duration, state, next lesson |
 | POST   | `/api/dlna/control`                     | `{"device": "<udn>", "action": "play"\|"pause"\|"stop"}`          |
 
 `/api/state` and `/api/lesson` carry `dlna_enabled`, so the UI hides the cast button when
@@ -231,6 +232,32 @@ original file, exactly as before, and the cast menu says so when a lesson would 
 toggled by hand: switch it off to push the untouched file (no CPU at all), switch it on to force a
 conversion when a device is pickier than OfflineU assumed.
 
+### Following the cast from the browser
+
+The picture stays on the TV, but the page does not go blind: `/api/dlna/session` reports where the
+device is and the lesson view shows it as a progress bar (paused/playing, position, length, what
+plays next), while the buttons pause, skip and stop the device from the browser.
+
+* The position comes from the device itself (`GetPositionInfo`) whenever it answers, which also
+  catches a pause or a skip done with the TV's own remote; devices that refuse the call fall back
+  to clock arithmetic and the UI says "estimated".
+* **The cast writes the same progress as the player.** Position and completion go into the very
+  same `.offlineu_progress.json`, under the same key, so a lesson watched on the TV counts towards
+  the course total, the tree and the "continue where you left off" card exactly like one watched in
+  the browser - and with the same rules: seconds never move backwards, and the completion flag is
+  only written when the lesson really reached its end (rewatching a finished lesson keeps it
+  completed). Every ~15 s while playing, once when it ends, and once when it is stopped.
+* **The length of the lesson decides whether an end can be seen at all**, so it is taken from
+  wherever it can be found: ffprobe (or `ffmpeg -i` when there is no ffprobe), the length the
+  browser measured while loading the file, and - while playing - the `TrackDuration` the device
+  reports. If none of them answers, the cast still shows its position but cannot tell that the
+  lesson ended; the progress bar then says so, and you mark the lesson completed by hand.
+* When the lesson ends, OfflineU **pushes the next playable lesson to the same device** by itself
+  (documents are skipped) and the browser follows to the new lesson. This is done by a watchdog in
+  the server, not by the page, so it also works with the browser closed. Turn it off by passing
+  `autoplay: false` to `/api/dlna/cast` — or by switching off *Autoplay next lesson* in the player
+  toolbar before casting.
+
 Casting can be switched off entirely: `OFFLINEU_DLNA=off` hides the button and makes
 `/api/dlna/*` answer `403`. The discovery result is cached for 30 s; **⟳ Search again** repeats
 the search immediately.
@@ -252,6 +279,7 @@ OfflineU/
 │   ├── subtitles.go            # SRT → WebVTT conversion (CP1252 fallback)
 │   ├── dlna.go                 # SSDP discovery, device description, SOAP casting
 │   ├── transcode.go            # optional ffmpeg: probe, repackage/re-encode, live stream
+│   ├── castsession.go          # running cast: position, watchdog, autoplay of the next lesson
 │   ├── server.go               # routes, JSON API, static + SPA fallback
 │   └── *_test.go               # Go test suite
 └── web/                        # Vue 3 + Vite frontend (built into web/dist and embedded)

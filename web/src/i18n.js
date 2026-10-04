@@ -184,6 +184,16 @@ const en = {
     empty:
       'No cast device answered. Switch your TV, speaker or player on and make sure it sits on the same network as OfflineU — in Docker the container needs network_mode: host to see it.',
     casting: 'Playing on {name}',
+    playing: 'Playing',
+    paused: 'Paused',
+    finished: 'Finished',
+    unknownDuration: 'length unknown',
+    onLesson: '“{title}”',
+    estimated: 'estimated from the clock',
+    noDuration: 'length unknown - it will not be marked finished on its own',
+    convertedHint: 'converted for this device',
+    next: '⏭ Next',
+    nextUp: 'Next: {title}',
     compatMode: 'Compatibility mode',
     compatHint:
       'Repackages the file while it plays (MPEG-TS) — needed for .mkv, .avi and friends. Exotic codecs are re-encoded; switch it off to hand over the untouched file.',
@@ -380,6 +390,16 @@ const zh = {
     empty:
       '没有设备响应。请打开电视、音箱或播放器，并确认它与 OfflineU 在同一个网络里 —— Docker 部署时容器需要 network_mode: host 才能发现设备。',
     casting: '正在 {name} 上播放',
+    playing: '播放中',
+    paused: '已暂停',
+    finished: '已播完',
+    unknownDuration: '时长未知',
+    onLesson: '“{title}”',
+    estimated: '按时间估算',
+    noDuration: '时长未知，不会自动标记完成',
+    convertedHint: '已为设备转换',
+    next: '⏭ 下一节',
+    nextUp: '下一节：{title}',
     compatMode: '兼容模式',
     compatHint:
       '播放时实时重新封装为 MPEG-TS —— .mkv、.avi 等格式需要它；编码不被支持时会自动转码。取消勾选则直接推送原始文件。',

@@ -11,8 +11,12 @@ const props = defineProps({
   lesson: { type: Object, required: true },
   enabled: { type: Boolean, default: true },
   // What the server decided for this file: { needs_transcode, transcode_available }
-  plan: { type: Object, default: () => ({}) }
+  plan: { type: Object, default: () => ({}) },
+  // Continuous playback: the server then pushes the next lesson on its own.
+  autoplay: { type: Boolean, default: true }
 })
+
+const emit = defineEmits(['casted'])
 
 const DEVICE_KEY = 'offlineu.castDevice'
 
@@ -79,10 +83,43 @@ function toggle() {
   if (open.value && !devices.value.length) loadDevices(false)
 }
 
+// The browser can read the length of most files while the server may not have
+// ffmpeg to do it - hand it over so the cast knows when the lesson ended.
+function measureDuration() {
+  const source = props.lesson?.video_src || props.lesson?.audio_src
+  if (!source || typeof window === 'undefined') return Promise.resolve(0)
+  return new Promise((resolve) => {
+    const probe = document.createElement(props.lesson?.video_src ? 'video' : 'audio')
+    let settled = false
+    const finish = (value) => {
+      if (settled) return
+      settled = true
+      window.clearTimeout(timer)
+      probe.removeAttribute('src')
+      probe.load?.()
+      resolve(Number.isFinite(value) && value > 0 ? value : 0)
+    }
+    const timer = window.setTimeout(() => finish(probe.duration), 1500)
+    probe.preload = 'metadata'
+    probe.muted = true
+    probe.addEventListener('loadedmetadata', () => finish(probe.duration))
+    probe.addEventListener('error', () => finish(0))
+    probe.src = source
+  })
+}
+
 async function cast(device) {
   busy.value = true
   try {
-    const result = await api.castTo(device.udn, props.lesson.rel_path, resumeAt.value, compat.value)
+    const duration = await measureDuration()
+    const result = await api.castTo(
+      device.udn,
+      props.lesson.rel_path,
+      resumeAt.value,
+      compat.value,
+      props.autoplay,
+      duration
+    )
     activeUDN.value = device.udn
     activeName.value = result.device || device.name
     storeDevice(device.udn)
@@ -91,6 +128,7 @@ async function cast(device) {
     } else {
       toast.success(t('toast.castStarted', { title: props.lesson.title, device: activeName.value }))
     }
+    emit('casted')
   } catch (cause) {
     toast.error(cause.message)
   } finally {
@@ -108,6 +146,7 @@ async function control(action) {
       activeUDN.value = ''
       activeName.value = ''
       storeDevice('')
+      emit('casted')
     }
   } catch (cause) {
     toast.error(cause.message)
