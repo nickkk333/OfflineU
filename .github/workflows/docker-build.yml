@@ -1,4 +1,4 @@
-name: Build and Push Docker Image
+name: Build & Release OfflineU
 
 on:
   push:
@@ -24,15 +24,6 @@ jobs:
         go-version-file: go.mod
         cache: true
 
-    - name: Check formatting
-      run: test -z "$(gofmt -l . )" || { gofmt -l .; exit 1; }
-
-    - name: Vet
-      run: go vet ./...
-
-    - name: Run test suite
-      run: go test ./... -count=1
-
     - name: Set up Node
       uses: actions/setup-node@v4
       with:
@@ -44,21 +35,34 @@ jobs:
       working-directory: web
       run: npm ci && npm run build
 
+    - name: Formatting / vet / test
+      run: |
+        test -z "$(gofmt -l . )" || { gofmt -l .; exit 1; }
+        go vet ./...
+        go test ./... -count=1
+
     - name: Verify the embedded frontend
       run: go run . --check-web
 
-  build:
+  # ---- Docker image: multi-arch, pushed to ghcr.io ----
+  docker:
     needs: test
     runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
-
     steps:
     - name: Checkout repository
       uses: actions/checkout@v4
 
+    - name: Set up QEMU (for arm64 emulation)
+      uses: docker/setup-qemu-action@v3
+
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+
     - name: Log in to the Container registry
+      if: github.event_name != 'pull_request'
       uses: docker/login-action@v3
       with:
         registry: ${{ env.REGISTRY }}
@@ -77,28 +81,74 @@ jobs:
           type=semver,pattern={{major}}.{{minor}}
           type=sha
 
-    - name: Set up Docker Buildx
-      uses: docker/setup-buildx-action@v3
-
     - name: Build and push Docker image
       uses: docker/build-push-action@v6
       with:
         context: .
+        platforms: linux/amd64,linux/arm64
         push: ${{ github.event_name != 'pull_request' }}
         tags: ${{ steps.meta.outputs.tags }}
         labels: ${{ steps.meta.outputs.labels }}
         cache-from: type=gha
         cache-to: type=gha,mode=max
 
-  # Build the fnOS .fpk with the official fnpack tool. Fully offline: the Docker
-  # image is built locally here and exported to app/images/offlineu-amd64.tar so
-  # it ships inside the package; cmd/main (native app) docker-loads it on start
-  # (no registry needed on the NAS). amd64/x86 only.
-  fpk:
-    needs: build
+  # ---- Native binaries: Linux (amd64/arm64) + Windows (amd64) ----
+  binaries:
+    needs: test
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { goos: linux,   goarch: amd64, ext: '' }
+          - { goos: linux,   goarch: arm64, ext: '' }
+          - { goos: windows, goarch: amd64, ext: '.exe' }
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version-file: go.mod
+        cache: true
+
+    - name: Set up Node
+      uses: actions/setup-node@v4
+      with:
+        node-version: '22'
+        cache: npm
+        cache-dependency-path: web/package-lock.json
+
+    - name: Build frontend
+      working-directory: web
+      run: npm ci && npm run build
+
+    - name: Build binary (${{ matrix.goos }}/${{ matrix.goarch }})
+      env:
+        GOOS: ${{ matrix.goos }}
+        GOARCH: ${{ matrix.goarch }}
+        EXT: ${{ matrix.ext }}
+        CGO_ENABLED: "0"
+      run: |
+        set -e
+        OUT="offlineu-${GOOS}-${GOARCH}${EXT}"
+        go build -trimpath -ldflags="-s -w" -o "$OUT" .
+        ls -l "$OUT"
+
+    - name: Upload binary artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: offlineu-${{ matrix.goos }}-${{ matrix.goarch }}
+        path: offlineu-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.ext }}
+        retention-days: 30
+
+  # ---- fnOS package (.fpk): amd64 / x86 only, fully offline ----
+  # The image is built locally here and exported into the package; cmd/main
+  # docker-loads it on start, so the NAS never reaches out to any registry.
+  fpk:
+    needs: test
+    runs-on: ubuntu-latest
     steps:
     - name: Checkout repository
       uses: actions/checkout@v4
@@ -120,7 +170,7 @@ jobs:
         set -e
         for V in 1.2.3 1.2.1 1.2.0; do
           if curl -fsSL "https://static2.fnnas.com/fnpack/fnpack-${V}-linux-amd64" -o fnpack; then
-            echo "using fnpack ${V}"; FNPACK_VERSION="${V}"; break
+            echo "using fnpack ${V}"; break
           fi
         done
         chmod +x fnpack
@@ -148,8 +198,59 @@ jobs:
         path: offlineu_1.0.0_x86.fpk
         retention-days: 30
 
-    - name: Attach fpk to release
-      if: startsWith(github.ref, 'refs/tags/')
+  # ---- Release: attach every asset when a v* tag is pushed ----
+  release:
+    name: Publish GitHub release
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: [docker, binaries, fpk]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+    - name: Download all artifacts
+      uses: actions/download-artifact@v4
+      with:
+        path: artifacts
+        pattern: offlineu-*
+        merge-multiple: true
+
+    - name: Generate checksums
+      working-directory: artifacts
+      run: sha256sum * > checksums.txt
+
+    - name: Create release
       uses: softprops/action-gh-release@v2
       with:
-        files: offlineu_1.0.0_x86.fpk
+        files: artifacts/*
+        generate_release_notes: true
+        body: |
+          ## OfflineU ${{ github.ref_name }}
+
+          ### Docker (multi-arch amd64 / arm64)
+          ```bash
+          docker pull ghcr.io/${{ github.repository }}:${{ github.ref_name }}
+          # 或指定架构：:${{ github.ref_name }}                    (manifest)
+          #               ghcr.io/${{ github.repository }}:${{ github.ref_name }}
+          docker run -p 5000:5000 -v "/host/courses:/courses:ro" -v "$PWD/data:/app/data" ghcr.io/${{ github.repository }}:${{ github.ref_name }}
+          ```
+
+          ### 飞牛OS / fnOS（仅 amd64）
+          应用中心 → 手动安装 → 上传 `offlineu_1.0.0_x86.fpk`（内置镜像，离线安装，无需镜像仓库）。
+
+          ### Linux / Windows 原生二进制
+          直接运行对应可执行文件（前端已内嵌），例如：
+          ```bash
+          ./offlineu-linux-amd64 --host 0.0.0.0 --port 5000
+          ./offlineu-linux-arm64 --host 0.0.0.0 --port 5000
+          ./offlineu-windows-amd64.exe --port 5000
+          ```
+          > 实时转封装（MKV / MPEG-TS → 浏览器原生 MP4）依赖 `ffmpeg`，请自行安装并放进 PATH；
+          > 不带 ffmpeg 时仍可浏览，但部分格式无法播放。
+
+          | 文件 | 说明 |
+          | --- | --- |
+          | `offlineu-linux-amd64` | Linux x86_64 二进制 |
+          | `offlineu-linux-arm64` | Linux ARM64 二进制 |
+          | `offlineu-windows-amd64.exe` | Windows x86_64 二进制 |
+          | `offlineu_1.0.0_x86.fpk` | 飞牛OS 应用包 |
+          | `checksums.txt` | SHA-256 校验和 |
