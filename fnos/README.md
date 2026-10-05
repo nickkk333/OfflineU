@@ -9,11 +9,14 @@
 ```
 fnos/
 ├── offlineu/                 # fnOS 应用工程（fnpack 期望的源树）
-│   ├── manifest             # 元信息（platform=x86、service_port=5000、checkport=false）
-│   ├── ICON.PNG / ICON_256.PNG
+│   ├── manifest             # 元信息（platform=x86、service_port=5000、checkport=false、desktop_uidir=ui）
+│   ├── ICON.PNG / ICON_256.PNG         # 包图标：64×64 / 256×256（大写在包根目录）
 │   ├── app/
 │   │   ├── docker/docker-compose.yaml  # 仅作手动/参考（等价于 cmd/main 的 docker run）
-│   │   └── images/offlineu-amd64.tar   # 内置镜像（打包时生成，*.tar 已 gitignore）
+│   │   ├── images/offlineu-amd64.tar   # 内置镜像（打包时生成，*.tar 已 gitignore）
+│   │   └── ui/                         # ★ 桌面入口：图标 + 点击后打开的地址
+│   │       ├── config                  # JSON：.url → offlineu.main（http://<NAS>:5000/）
+│   │       └── images/icon_{64,256}.png
 │   ├── cmd/install_init      # 安装最早期（native 应用：无操作）
 │   ├── cmd/install_callback  # 清理旧容器
 │   ├── cmd/main              # ★ 核心：docker load + docker run（host 网络）
@@ -73,8 +76,24 @@ cd fnos
 5. 浏览器打开 `http://<NAS IP>:<端口>` 即可播放；MKV / 伪 .mp4(MPEG-TS) 等会被服务端实时
    remux 为可拖动的 MP4。
 
+## 桌面图标（应用入口）
+
+fnOS 的桌面图标由 `manifest` 的桌面字段 + `app/ui/config` 共同决定：
+
+- `manifest`：`desktop_uidir = ui`、`desktop_applaunchname = offlineu.main`
+  （入口 ID 必须与 `app/ui/config` 里 `.url` 下的键名一致）。
+- `app/ui/config`：定义入口 `offlineu.main`，`type = url`，点击图标用浏览器打开
+  `http://<NAS-IP>:5000/`（端口取自 `port`，固定 5000，与向导默认值 / `service_port` 一致）。
+- `app/ui/images/icon_64.png`、`icon_256.png`：桌面图标（由根目录 `ICON.PNG` / `ICON_256.PNG` 复制）。
+
+> 若在安装向导里把「服务端口」改成非 5000，桌面图标仍指向 5000；请保持默认端口 5000，
+> 或同步修改 `app/ui/config` 的 `port`。
+
 ## 排错
 
+- **桌面没有应用图标**：确认 `manifest` 含 `desktop_uidir = ui` 与 `desktop_applaunchname = offlineu.main`，
+  且包内存在 `app/ui/config` 与 `app/ui/images/icon_64.png`、`icon_256.png`，入口 ID 与
+  `desktop_applaunchname` 一致；修改后需重新 `fnpack build` 打包并重装/升级。
 - **`No such image: offlineu:local`**：说明走了 `docker-project`（安装阶段 compose up）。
   本包已改用 native 应用（见上）；若仍出现，检查 `config/resource` 是否为 `{}`。
 - **启动日志**：`cmd/main` 把 `docker load` / `docker run` 的输出写入

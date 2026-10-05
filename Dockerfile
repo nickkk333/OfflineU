@@ -23,6 +23,10 @@ FROM golang:1.24-alpine AS build
 
 WORKDIR /src
 
+# Version is injected at build time: CI passes the git tag, fnos/build.ps1 passes
+# the manifest version, and a bare "docker build" falls back to a dev marker.
+ARG VERSION=0.0.0-dev
+
 COPY go.mod ./
 COPY main.go ./
 COPY internal/ ./internal/
@@ -31,7 +35,7 @@ COPY internal/ ./internal/
 COPY --from=frontend /web/dist ./web/dist
 
 # CGO_ENABLED=0 produces a static binary that runs on plain Alpine.
-RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/offlineu .
+RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -X github.com/nickkk333/offlineu/internal/offlineu.Version=${VERSION}" -o /out/offlineu .
 
 # ---------------------------------------------------------------------------
 # Stage 3 - minimal runtime image

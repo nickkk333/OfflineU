@@ -6,4 +6,6 @@ fnos/offlineu/wizard/*      text eol=lf
 fnos/offlineu/config/*      text eol=lf
 fnos/offlineu/manifest      text eol=lf
 fnos/offlineu/app/docker/docker-compose.yaml  text eol=lf
+fnos/offlineu/app/ui/config text eol=lf
+fnos/offlineu/app/ui/images/*.png binary
 fnos/build.ps1              text eol=lf

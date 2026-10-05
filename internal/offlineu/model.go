@@ -14,7 +14,7 @@ const (
 	MaxRecentCourses    = 20
 	ProgressFilename    = ".offlineu_progress.json"
 	StateFilename       = "offlineu_state.json"
-	Version             = "2.0.0"
+	Version             = "2.0.1"
 )
 
 var videoExtensions = []string{".mp4", ".mkv", ".avi", ".mov", ".webm", ".m4v", ".flv", ".wmv"}

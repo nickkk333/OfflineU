@@ -58,7 +58,7 @@ if (-not $fnpackCmd) {
 # surface that as a NativeCommandError.
 $dockerfile = Join-Path $repoRoot "Dockerfile"
 Write-Host "==> Building docker image offlineu:local (linux/amd64) ..."
-cmd /c "docker build --platform linux/amd64 -t offlineu:local -f `"$dockerfile`" `"$repoRoot`" 2>&1"
+cmd /c "docker build --platform linux/amd64 --build-arg VERSION=$pkgVer -t offlineu:local -f `"$dockerfile`" `"$repoRoot`" 2>&1"
 if ($LASTEXITCODE -ne 0) { throw "docker build failed" }
 Write-Host "==> Saving image to $imgTar ..."
 New-Item -ItemType Directory -Force -Path $imgDir | Out-Null
