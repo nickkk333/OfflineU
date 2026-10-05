@@ -1,12 +1,14 @@
 #!/bin/bash
 # fnOS install hook (native app). Pre-load the bundled image so it is present
 # before the app is started for the first time. Idempotent: re-loading an
-# existing image is a cheap no-op.
+# existing image is a cheap no-op. Failures here are non-fatal - cmd/main start
+# re-verifies and logs to app/docker/start.log.
 set -u
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 IMG="$SCRIPT_DIR/../app/docker/offlineu-image.tar"
+LOG="$SCRIPT_DIR/../app/docker/start.log"
 if [ -f "$IMG" ]; then
-  echo "pre-loading bundled image from $IMG"
-  docker load -i "$IMG"
+  echo "[$(date '+%F %T')] install_callback: pre-loading image from $IMG" >> "$LOG" 2>&1
+  docker load -i "$IMG" >> "$LOG" 2>&1 || true
 fi
 exit 0

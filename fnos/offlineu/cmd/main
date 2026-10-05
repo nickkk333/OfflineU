@@ -7,36 +7,67 @@
 # app is "native": this script owns the container, loading the bundled image tar
 # first and then driving compose.
 #
-# Networking is host mode and the courses path is supplied via $APP_DIR/.env
-# (generated here on first start from the install-wizard values / defaults), so
-# `docker compose` can substitute ${OFFLINEU_COURSES} / ${OFFLINEU_HTTP_PORT} / ...
+# Networking defaults to host mode (OFFLINEU_NETWORK_MODE in .env); if fnOS rejects
+# host networking, set it to "bridge" there and the ports mapping takes over.
+#
+# Everything is logged to $APP_DIR/start.log so a failed start can be diagnosed
+# from the NAS (the app's app/docker/start.log) without SSH.
 set -u
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SELF="${BASH_SOURCE[0]}"
+# Resolve the app tree by walking up from this script to find app/docker.
+SCRIPT_DIR="$(cd "$(dirname "$SELF")" && pwd)"
 APP_DIR="$SCRIPT_DIR/../app/docker"
 COMPOSE="$APP_DIR/docker-compose.yaml"
-IMG="$APP_DIR/offlineu-image.tar"
 ENVFILE="$APP_DIR/.env"
+LOG="$APP_DIR/start.log"
 PROJECT="offlineu"
 CONTAINER="offlineu"
 
-load_image() {
-  if [ -f "$IMG" ]; then
-    echo "loading bundled image from $IMG"
-    docker load -i "$IMG"
+log() { echo "[$(date '+%F %T')] $*" >> "$LOG"; }
+
+# Locate the bundled image tar even if the script was copied elsewhere.
+find_image() {
+  local cand
+  for cand in "$APP_DIR/offlineu-image.tar" \
+              "$SCRIPT_DIR/../app/docker/offlineu-image.tar" \
+              "$SCRIPT_DIR/offlineu-image.tar"; do
+    [ -f "$cand" ] && { echo "$cand"; return 0; }
+  done
+  # last resort: search the app tree
+  find "$SCRIPT_DIR/.." -maxdepth 4 -name offlineu-image.tar 2>/dev/null | head -n1
+}
+
+ensure_image() {
+  if docker image inspect offlineu:local >/dev/null 2>&1; then
+    log "image offlineu:local already present"
+    return 0
+  fi
+  local img
+  img="$(find_image)"
+  if [ -z "$img" ]; then
+    log "ERROR: bundled image tar not found (searched near $SCRIPT_DIR)"
+    return 1
+  fi
+  log "loading bundled image from $img"
+  if docker load -i "$img" >> "$LOG" 2>&1; then
+    log "image loaded OK"
+    return 0
+  else
+    log "ERROR: docker load failed"
+    return 1
   fi
 }
 
-# Generate .env on first start so compose can substitute the user-supplied paths.
-# fnOS passes the install-wizard fields (OFFLINEU_COURSES / OFFLINEU_HTTP_PORT /
-# OFFLINEU_TZ) as environment variables to this script; fall back to defaults.
+# Generate .env on first start from install-wizard values (or defaults).
 write_env() {
   if [ ! -f "$ENVFILE" ]; then
     {
       echo "OFFLINEU_COURSES=${OFFLINEU_COURSES:-/mnt/offlineu/courses}"
       echo "OFFLINEU_HTTP_PORT=${OFFLINEU_HTTP_PORT:-5000}"
       echo "OFFLINEU_TZ=${OFFLINEU_TZ:-Asia/Shanghai}"
+      echo "OFFLINEU_NETWORK_MODE=${OFFLINEU_NETWORK_MODE:-host}"
     } > "$ENVFILE"
-    echo "wrote $ENVFILE (edit it to change the courses path / port)"
+    log "wrote $ENVFILE (edit it to change courses path / port / network mode)"
   fi
 }
 
@@ -46,13 +77,27 @@ is_running() {
 
 case "${1:-}" in
   start)
-    load_image
+    : > "$LOG"
+    log "=== start === SELF=$SELF APP_DIR=$APP_DIR"
+    if ! ensure_image; then
+      log "start aborted: image not available"
+      exit 3
+    fi
     write_env
-    ( cd "$APP_DIR" && docker compose --project-name "$PROJECT" -f "$COMPOSE" up -d )
+    log "running: docker compose up -d (cwd=$APP_DIR)"
+    ( cd "$APP_DIR" && docker compose --project-name "$PROJECT" -f "$COMPOSE" up -d ) >> "$LOG" 2>&1
+    rc=$?
+    log "compose up exit code: $rc"
+    if [ "$rc" -ne 0 ]; then
+      log "--- docker ps -a ---"; docker ps -a >> "$LOG" 2>&1
+      log "--- docker images offlineu:local ---"; docker images offlineu:local >> "$LOG" 2>&1
+      log "start failed; see $LOG"
+      exit 3
+    fi
     exit 0
     ;;
   stop)
-    ( cd "$APP_DIR" && docker compose --project-name "$PROJECT" -f "$COMPOSE" stop ) 2>/dev/null || true
+    ( cd "$APP_DIR" && docker compose --project-name "$PROJECT" -f "$COMPOSE" stop ) >> "$LOG" 2>&1 || true
     exit 0
     ;;
   status)
