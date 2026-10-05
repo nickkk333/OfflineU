@@ -1,4 +1,17 @@
 #!/bin/bash
-# fnOS lifecycle hook. For a Docker app the app center drives docker compose,
-# so these hooks are no-ops that only need to report success.
+# fnOS install hook (runs at the very start of installation, BEFORE fnOS starts
+# the docker-project container). Load the bundled image here so it is present in
+# the local Docker when fnOS brings the container up with pull_policy: never.
+# Idempotent: re-loading an existing image is a cheap no-op.
+set -u
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+IMG="$SCRIPT_DIR/../app/docker/offlineu-image.tar"
+LOG="$SCRIPT_DIR/../app/docker/install.log"
+echo "[$(date '+%F %T')] install_init: loading bundled image from $IMG" >> "$LOG" 2>&1
+if [ -f "$IMG" ]; then
+  docker load -i "$IMG" >> "$LOG" 2>&1 && echo "install_init: image loaded OK" >> "$LOG" 2>&1 \
+    || echo "install_init: ERROR docker load failed" >> "$LOG" 2>&1
+else
+  echo "install_init: ERROR image tar not found at $IMG" >> "$LOG" 2>&1
+fi
 exit 0

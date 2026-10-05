@@ -1,4 +1,12 @@
 {
+  "docker-project": {
+    "projects": [
+      {
+        "name": "offlineu",
+        "path": "docker"
+      }
+    ]
+  },
   "data-share": {
     "shares": [
       {

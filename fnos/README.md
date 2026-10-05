@@ -1,7 +1,7 @@
 # OfflineU 飞牛OS（fnOS）应用包
 
 本目录把 OfflineU 打包成飞牛OS 应用中心可直接安装的 `.fpk` 包（仅 **amd64 / x86**）。
-**完全离线**：Docker 镜像随包内置，安装时由本地的 `cmd/main` 执行 `docker load`，
+**完全离线**：Docker 镜像随包内置，安装阶段由 `cmd/install_init` 执行 `docker load`，
 飞牛OS 全程不访问任何镜像仓库。
 
 ## 目录结构
@@ -13,22 +13,24 @@ fnos/
 │   ├── ICON.PNG             # 64×64 图标
 │   ├── ICON_256.PNG         # 256×256 图标
 │   ├── app/docker/
-│   │   ├── docker-compose.yaml  # image: offlineu:local + pull_policy: never
+│   │   ├── docker-compose.yaml  # image: offlineu:local + pull_policy: never（bridge+端口）
 │   │   └── offlineu-image.tar   # 本地构建出的镜像（打包时生成，*.tar 已被 gitignore）
-│   ├── cmd/main             # native 生命周期入口：docker load + compose up/down/status
-│   ├── cmd/install_callback # 安装时预加载内置镜像
+│   ├── cmd/install_init     # 安装最早期加载内置镜像（早于容器启动）
+│   ├── cmd/install_callback # 镜像加载兜底 + 校验
+│   ├── cmd/main             # 生命周期 no-op（docker-project 管理容器）
 │   ├── config/privilege     # 运行身份
-│   ├── config/resource      # 共享目录声明
-│   └── wizard/install       # 安装向导（端口、时区）
+│   ├── config/resource      # docker-project + 共享目录声明
+│   └── wizard/install       # 安装向导（课程目录、端口、时区）
 └── build.ps1                # 本地一键打包（Windows：构建镜像 + 导出 + fnpack）
 ```
 
-## 为什么是 native 应用（不用 docker-project）
+## 为什么用 docker-project（而非 native）
 
-飞牛OS 的 `docker-project` 资源会在**任何生命周期钩子之前**就执行 `docker compose up`。
-若镜像随包内置、靠钩子 `docker load`，compose 启动时镜像尚不存在会报 `No such image`。
-因此本包声明为 **native 应用**：不写 `docker-project`，而由 `cmd/main` 自己负责
-`docker load 内置镜像` → `docker compose up`，从而完全离线。
+飞牛OS 的 `docker-project` 资源会让应用中心负责拉起/暴露容器端口。若改成 native 应用
+（脚本自己 `docker compose up`），应用中心不会为容器做端口暴露/反代，且会因主进程
+（`cmd/main`）很快退出而把应用标记为"已停止"——表现为「启动后自动停止、无法访问」。
+因此本包用 `docker-project` 让 fnOS 正常管理容器，并在**安装钩子**（`install_init`，
+早于容器启动）里 `docker load` 内置镜像，从而既离线又能被正确托管。
 
 ## 打包
 
@@ -58,18 +60,20 @@ cd fnos
 ## 安装（离线，无镜像仓库）
 
 1. 飞牛OS → 应用中心 → 手动安装 → 上传 `offlineu_1.0.0_x86.fpk`。
-2. 向导中设置对外端口（默认 5000）与时区。
-3. 安装/启动阶段 `cmd/main` 自动 `docker load` 包内镜像并 `compose up`，**无需联网**。
-4. **课程目录（手动指定）**：安装向导里的「课程目录（绝对路径）」填宿主机上课程文件夹的
-   绝对路径（如 `/vol1/1000/offlineu/courses` 或 `/mnt/offlineu/courses`），首次启动由
-   `cmd/main` 写入 `app/docker/.env`，compose 将其挂到容器 `/courses`（只读）。
-   **进度数据固定写在安装目录下的 `app/docker/data`**（无需指定）。
-5. 浏览器打开 `http://<NAS IP>:<端口>`（host 网络模式，端口即向导所填）即可播放；
-   MKV / 伪 .mp4(MPEG-TS) 等会被服务端实时 remux 为可拖动的 MP4。
+2. 向导中填写：
+   - **课程目录（绝对路径）**：宿主机上课程文件夹的绝对路径（如 `/vol1/1000/offlineu/courses`），
+     容器内挂到 `/courses`（只读）。
+   - **服务端口**（默认 5000）、**时区**。
+3. 安装阶段 `cmd/install_init` 自动 `docker load` 包内镜像，随后 docker-project 以
+   `offlineu:local` 拉起容器（bridge 网络 + 端口映射，应用中心据此暴露端口），**无需联网**。
+4. 进度数据固定写在安装目录下的 `app/docker/data`（无需指定）。
+5. 浏览器打开 `http://<NAS IP>:<端口>` 即可播放；MKV / 伪 .mp4(MPEG-TS) 等会被服务端实时
+   remux 为可拖动的 MP4。
 
-## 常见报错
+## 排错
 
 - **应用包不符合系统要求**：fpk 不是 `fnpack` 生成，或 `manifest` 的 `platform` 不是
   `x86`/`arm`，或包内脚本是 CRLF（本仓库已用 `.gitattributes` + 构建脚本强制 LF）。
-- **启动后容器不存在 / No such image**：说明镜像未被 load。确认 fpk 由本仓库脚本生成
-  （含 `offlineu-image.tar`），且安装时运行了 `cmd/main start`（native 应用由应用中心调用）。
+- **安装后容器起不来 / 端口不通**：查看 `app/docker/install.log`（安装钩子把镜像加载结果
+  写在这里）。若提示镜像 tar 未找到或 load 失败，说明包内镜像缺失，请用本仓库脚本重新构建。
+- 容器日志可在飞牛「Docker」应用里看 `offlineu` 容器。

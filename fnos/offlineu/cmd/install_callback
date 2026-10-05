@@ -1,14 +1,19 @@
 #!/bin/bash
-# fnOS install hook (native app). Pre-load the bundled image so it is present
-# before the app is started for the first time. Idempotent: re-loading an
-# existing image is a cheap no-op. Failures here are non-fatal - cmd/main start
-# re-verifies and logs to app/docker/start.log.
+# fnOS install hook (runs after files are extracted, still BEFORE the container is
+# started). Re-load the bundled image as a safety net and verify it is present.
 set -u
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 IMG="$SCRIPT_DIR/../app/docker/offlineu-image.tar"
-LOG="$SCRIPT_DIR/../app/docker/start.log"
-if [ -f "$IMG" ]; then
-  echo "[$(date '+%F %T')] install_callback: pre-loading image from $IMG" >> "$LOG" 2>&1
-  docker load -i "$IMG" >> "$LOG" 2>&1 || true
+LOG="$SCRIPT_DIR/../app/docker/install.log"
+echo "[$(date '+%F %T')] install_callback: ensure image present" >> "$LOG" 2>&1
+if ! docker image inspect offlineu:local >/dev/null 2>&1; then
+  if [ -f "$IMG" ]; then
+    docker load -i "$IMG" >> "$LOG" 2>&1 && echo "install_callback: image loaded OK" >> "$LOG" 2>&1 \
+      || echo "install_callback: ERROR docker load failed" >> "$LOG" 2>&1
+  else
+    echo "install_callback: ERROR image tar not found at $IMG" >> "$LOG" 2>&1
+  fi
+else
+  echo "install_callback: image offlineu:local already present" >> "$LOG" 2>&1
 fi
 exit 0

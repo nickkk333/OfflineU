@@ -1,18 +1,16 @@
-# 离线安装：镜像随 fpk 内置（app/docker/offlineu-image.tar），
-# 由 cmd/main（native 应用）在启动前 docker load，再 docker compose up。
-# 不依赖任何远程仓库；pull_policy: never。
+# 离线安装：镜像随 fpk 内置（app/docker/offlineu-image.tar）。
+# 由 cmd/install_init 在安装阶段把镜像 docker load 进本地，fnOS 随后通过
+# docker-project 启动本容器；pull_policy: never，全程不访问任何远程仓库。
 #
-#  - 网络：默认 host 模式（OFFLINEU_NETWORK_MODE，见 .env）。若飞牛OS 拒绝 host
-#    网络导致容器起不来，把 .env 里改成 bridge 即可（ports 映射会生效）。
+#  - 网络：bridge + 端口映射（fnOS 应用中心据此暴露/反代端口，最稳妥）。
 #  - data：固定挂载到安装目录下的 app/docker/data（进度 + 课程列表，可读写）。
-#  - courses：由用户在安装向导中手动指定的宿主机绝对路径，挂到 /courses:ro。
-#    变量来自 $APP_DIR/.env（首次启动时由 cmd/main 依据安装向导/默认值生成）。
+#  - courses：由安装向导手动指定的宿主机绝对路径，挂到 /courses:ro。
+#    向导字段 OFFLINEU_COURSES / OFFLINEU_HTTP_PORT / OFFLINEU_TZ 由 fnOS 注入 compose。
 services:
   offlineu:
     image: offlineu:local
     container_name: offlineu
     pull_policy: never
-    network_mode: ${OFFLINEU_NETWORK_MODE:-host}
     user: "0:0"
     environment:
       - OFFLINEU_HOST=0.0.0.0
