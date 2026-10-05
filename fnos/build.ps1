@@ -13,12 +13,14 @@
 #     Windows via --platform linux/amd64). Needs internet to pull base images at
 #     BUILD time only - the resulting fpk is offline for the NAS.
 #   - The first run also fetches fnpack from fnnas.com; cached as fnpack.exe.
-$ErrorActionPreference = "Stop"
+# "Continue" (not "Stop") so docker's progress output on stderr is not flagged as
+# a terminating NativeCommandError; we check $LASTEXITCODE explicitly instead.
+$ErrorActionPreference = "Continue"
 
 $root       = Split-Path -Parent $MyInvocation.MyCommand.Path
 $repoRoot   = Split-Path -Parent $root          # OfflineU repo root (Dockerfile lives here)
 $app        = Join-Path $root "offlineu"
-$imgTar     = Join-Path $app "app" "docker" "offlineu-image.tar"
+$imgTar     = Join-Path (Join-Path (Join-Path $app "app") "docker") "offlineu-image.tar"
 $out        = Join-Path $root "offlineu_1.0.0_x86.fpk"
 $fnpack     = Join-Path $root "fnpack.exe"
 
@@ -50,8 +52,10 @@ if (-not $fnpackCmd) {
 # 2) Build the Docker image (amd64) and export it into the package tree.
 Write-Host "==> Building docker image offlineu:local (linux/amd64) ..."
 docker build --platform linux/amd64 -t offlineu:local -f (Join-Path $repoRoot "Dockerfile") $repoRoot
+if ($LASTEXITCODE -ne 0) { throw "docker build failed" }
 Write-Host "==> Saving image to $imgTar ..."
 docker save offlineu:local -o $imgTar
+if ($LASTEXITCODE -ne 0) { throw "docker save failed" }
 
 # 3) Normalize text files to LF so the bash scripts run under fnOS (Linux).
 #    git's autocrlf would otherwise inject CRLF, breaking the `#!/bin/bash` shebang.
