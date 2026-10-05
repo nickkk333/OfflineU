@@ -60,11 +60,12 @@ cd fnos
 1. 飞牛OS → 应用中心 → 手动安装 → 上传 `offlineu_1.0.0_x86.fpk`。
 2. 向导中设置对外端口（默认 5000）与时区。
 3. 安装/启动阶段 `cmd/main` 自动 `docker load` 包内镜像并 `compose up`，**无需联网**。
-4. 把课程文件夹放进应用安装目录下的 `app/docker/courses`（只读挂载到容器内 `/courses`）：
-   在飞牛「文件管理」里找到 offlineu 应用的安装目录（一般在 `/vol1/1000/apps/offlineu`
-   或类似路径），于其 `app/docker/courses` 放入课程；进度数据写在 `app/docker/data`。
-5. 浏览器打开 `http://<NAS IP>:<端口>` 即可播放；MKV / 伪 .mp4(MPEG-TS) 等会被服务端实时
-   remux 为可拖动的 MP4。
+4. **课程目录（手动指定）**：安装向导里的「课程目录（绝对路径）」填宿主机上课程文件夹的
+   绝对路径（如 `/vol1/1000/offlineu/courses` 或 `/mnt/offlineu/courses`），首次启动由
+   `cmd/main` 写入 `app/docker/.env`，compose 将其挂到容器 `/courses`（只读）。
+   **进度数据固定写在安装目录下的 `app/docker/data`**（无需指定）。
+5. 浏览器打开 `http://<NAS IP>:<端口>`（host 网络模式，端口即向导所填）即可播放；
+   MKV / 伪 .mp4(MPEG-TS) 等会被服务端实时 remux 为可拖动的 MP4。
 
 ## 常见报错
 

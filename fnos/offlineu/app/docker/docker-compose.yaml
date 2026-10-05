@@ -1,23 +1,25 @@
-# 离线安装：镜像已随 fpk 内置（app/docker/offlineu-image.tar），
+# 离线安装：镜像随 fpk 内置（app/docker/offlineu-image.tar），
 # 由 cmd/main（native 应用）在启动前 docker load，再 docker compose up。
-# 不再依赖任何远程仓库；pull_policy: never。
-# 课程库挂载在 ./courses（只读），进度数据在 ./data。
+# 不依赖任何远程仓库；pull_policy: never。
+#
+#  - 网络：host 模式，直接使用宿主机网络，端口由 OFFLINEU_PORT 决定。
+#  - data：固定挂载到安装目录下的 app/docker/data（进度 + 课程列表，可读写）。
+#  - courses：由用户在安装向导中手动指定的宿主机绝对路径，挂到 /courses:ro。
+#    变量来自 $APP_DIR/.env（首次启动时由 cmd/main 依据安装向导/默认值生成）。
 services:
   offlineu:
     image: offlineu:local
     container_name: offlineu
     pull_policy: never
-    # 以 root 运行，避免 NAS 上课程目录的权限问题（镜像内已做能力降级处理）。
+    network_mode: host
     user: "0:0"
     environment:
       - OFFLINEU_HOST=0.0.0.0
-      - OFFLINEU_PORT=5000
+      - OFFLINEU_PORT=${OFFLINEU_HTTP_PORT:-5000}
       - OFFLINEU_ROOTS=/courses
       - OFFLINEU_PROGRESS_DIR=/app/data
       - TZ=${OFFLINEU_TZ:-Asia/Shanghai}
     volumes:
-      - ./courses:/courses:ro
+      - ${OFFLINEU_COURSES:-/mnt/offlineu/courses}:/courses:ro
       - ./data:/app/data
-    ports:
-      - "${OFFLINEU_HTTP_PORT:-5000}:5000"
     restart: unless-stopped

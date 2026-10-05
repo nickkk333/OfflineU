@@ -4,13 +4,20 @@
     "items": [
       {
         "type": "text",
-        "field": "OFFLINEU_HTTP_PORT",
-        "label": "对外访问端口",
-        "initValue": "5000",
-        "description": "浏览器访问 OfflineU 的端口",
+        "field": "OFFLINEU_COURSES",
+        "label": "课程目录（绝对路径）",
+        "initValue": "/mnt/offlineu/courses",
+        "description": "宿主机上课程文件夹的绝对路径，例如 /vol1/1000/offlineu/courses 或 /mnt/offlineu/courses。容器内挂到 /courses（只读）。",
         "rules": [
-          { "required": true, "message": "请输入端口" }
+          { "required": true, "message": "请输入课程目录绝对路径" }
         ]
+      },
+      {
+        "type": "text",
+        "field": "OFFLINEU_HTTP_PORT",
+        "label": "服务端口",
+        "initValue": "5000",
+        "description": "OfflineU 监听端口（host 网络模式，直接占用该宿主机端口）"
       },
       {
         "type": "text",

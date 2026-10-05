@@ -6,11 +6,16 @@
 # the package could not be `docker load`-ed in time (No such image). Instead this
 # app is "native": this script owns the container, loading the bundled image tar
 # first and then driving compose.
+#
+# Networking is host mode and the courses path is supplied via $APP_DIR/.env
+# (generated here on first start from the install-wizard values / defaults), so
+# `docker compose` can substitute ${OFFLINEU_COURSES} / ${OFFLINEU_HTTP_PORT} / ...
 set -u
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 APP_DIR="$SCRIPT_DIR/../app/docker"
 COMPOSE="$APP_DIR/docker-compose.yaml"
 IMG="$APP_DIR/offlineu-image.tar"
+ENVFILE="$APP_DIR/.env"
 PROJECT="offlineu"
 CONTAINER="offlineu"
 
@@ -21,6 +26,20 @@ load_image() {
   fi
 }
 
+# Generate .env on first start so compose can substitute the user-supplied paths.
+# fnOS passes the install-wizard fields (OFFLINEU_COURSES / OFFLINEU_HTTP_PORT /
+# OFFLINEU_TZ) as environment variables to this script; fall back to defaults.
+write_env() {
+  if [ ! -f "$ENVFILE" ]; then
+    {
+      echo "OFFLINEU_COURSES=${OFFLINEU_COURSES:-/mnt/offlineu/courses}"
+      echo "OFFLINEU_HTTP_PORT=${OFFLINEU_HTTP_PORT:-5000}"
+      echo "OFFLINEU_TZ=${OFFLINEU_TZ:-Asia/Shanghai}"
+    } > "$ENVFILE"
+    echo "wrote $ENVFILE (edit it to change the courses path / port)"
+  fi
+}
+
 is_running() {
   [ "$(docker inspect -f '{{.State.Running}}' "$CONTAINER" 2>/dev/null)" = "true" ]
 }
@@ -28,6 +47,7 @@ is_running() {
 case "${1:-}" in
   start)
     load_image
+    write_env
     ( cd "$APP_DIR" && docker compose --project-name "$PROJECT" -f "$COMPOSE" up -d )
     exit 0
     ;;

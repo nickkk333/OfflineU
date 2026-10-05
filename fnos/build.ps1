@@ -50,11 +50,14 @@ if (-not $fnpackCmd) {
 }
 
 # 2) Build the Docker image (amd64) and export it into the package tree.
+# docker streams progress to stderr; run it via cmd /c so PowerShell does not
+# surface that as a NativeCommandError.
+$dockerfile = Join-Path $repoRoot "Dockerfile"
 Write-Host "==> Building docker image offlineu:local (linux/amd64) ..."
-docker build --platform linux/amd64 -t offlineu:local -f (Join-Path $repoRoot "Dockerfile") $repoRoot
+cmd /c "docker build --platform linux/amd64 -t offlineu:local -f `"$dockerfile`" `"$repoRoot`" 2>&1"
 if ($LASTEXITCODE -ne 0) { throw "docker build failed" }
 Write-Host "==> Saving image to $imgTar ..."
-docker save offlineu:local -o $imgTar
+cmd /c "docker save offlineu:local -o `"$imgTar`" 2>&1"
 if ($LASTEXITCODE -ne 0) { throw "docker save failed" }
 
 # 3) Normalize text files to LF so the bash scripts run under fnOS (Linux).
