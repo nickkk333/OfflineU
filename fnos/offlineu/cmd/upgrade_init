@@ -1,4 +1,5 @@
 #!/bin/bash
-# fnOS lifecycle hook. For a Docker app the app center drives docker compose,
-# so these hooks are no-ops that only need to report success.
+# fnOS upgrade hook: remove the old container so cmd/main start recreates it
+# from the newly loaded image.
+docker rm -f offlineu >/dev/null 2>&1 || true
 exit 0

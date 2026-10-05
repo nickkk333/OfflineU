@@ -1,16 +1,16 @@
-# 离线安装：镜像随 fpk 内置（app/docker/offlineu-image.tar）。
-# 由 cmd/install_init 在安装阶段把镜像 docker load 进本地，fnOS 随后通过
-# docker-project 启动本容器；pull_policy: never，全程不访问任何远程仓库。
+# 供手动/参考使用。fnOS 安装走的是 native 应用（cmd/main 直接 docker run），
+# 并不会读取本文件——内置镜像由 cmd/main 在启动前 docker load 后 `docker run`。
+# 这里保持与 cmd/main 等价，便于在任意主机上手工 `docker compose up` 验证。
 #
-#  - 网络：bridge + 端口映射（fnOS 应用中心据此暴露/反代端口，最稳妥）。
-#  - data：固定挂载到安装目录下的 app/docker/data（进度 + 课程列表，可读写）。
-#  - courses：由安装向导手动指定的宿主机绝对路径，挂到 /courses:ro。
-#    向导字段 OFFLINEU_COURSES / OFFLINEU_HTTP_PORT / OFFLINEU_TZ 由 fnOS 注入 compose。
+#  - 网络：host 模式（容器自行绑定端口，故 manifest checkport=false，且不写 ports）。
+#  - data：映射到持久目录（fnOS 下为 ${TRIM_PKGVAR}/data，手动运行时为 ./data）。
+#  - courses：向导指定的宿主机绝对路径，挂到 /courses:ro。
 services:
   offlineu:
     image: offlineu:local
     container_name: offlineu
     pull_policy: never
+    network_mode: host
     user: "0:0"
     environment:
       - OFFLINEU_HOST=0.0.0.0
@@ -21,6 +21,4 @@ services:
     volumes:
       - ${OFFLINEU_COURSES:-/mnt/offlineu/courses}:/courses:ro
       - ./data:/app/data
-    ports:
-      - "${OFFLINEU_HTTP_PORT:-5000}:5000"
     restart: unless-stopped

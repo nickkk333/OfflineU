@@ -1,19 +1,5 @@
 #!/bin/bash
-# fnOS install hook (runs after files are extracted, still BEFORE the container is
-# started). Re-load the bundled image as a safety net and verify it is present.
-set -u
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-IMG="$SCRIPT_DIR/../app/docker/offlineu-image.tar"
-LOG="$SCRIPT_DIR/../app/docker/install.log"
-echo "[$(date '+%F %T')] install_callback: ensure image present" >> "$LOG" 2>&1
-if ! docker image inspect offlineu:local >/dev/null 2>&1; then
-  if [ -f "$IMG" ]; then
-    docker load -i "$IMG" >> "$LOG" 2>&1 && echo "install_callback: image loaded OK" >> "$LOG" 2>&1 \
-      || echo "install_callback: ERROR docker load failed" >> "$LOG" 2>&1
-  else
-    echo "install_callback: ERROR image tar not found at $IMG" >> "$LOG" 2>&1
-  fi
-else
-  echo "install_callback: image offlineu:local already present" >> "$LOG" 2>&1
-fi
+# fnOS install hook (after files are applied). Remove any stale container left by
+# a previous install attempt so cmd/main start begins from a clean state. Idempotent.
+docker rm -f offlineu >/dev/null 2>&1 || true
 exit 0

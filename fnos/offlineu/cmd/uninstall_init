@@ -1,4 +1,4 @@
 #!/bin/bash
-# fnOS lifecycle hook. For a Docker app the app center drives docker compose,
-# so these hooks are no-ops that only need to report success.
+# fnOS uninstall hook: stop the app-owned container before files are removed.
+docker stop offlineu >/dev/null 2>&1 || true
 exit 0

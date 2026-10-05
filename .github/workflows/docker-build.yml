@@ -91,9 +91,9 @@ jobs:
         cache-to: type=gha,mode=max
 
   # Build the fnOS .fpk with the official fnpack tool. Fully offline: the Docker
-  # image is built locally here and exported to app/docker/offlineu-image.tar so
-  # it ships inside the package; cmd/main loads it at install time (no registry
-  # needed on the NAS). amd64/x86 only.
+  # image is built locally here and exported to app/images/offlineu-amd64.tar so
+  # it ships inside the package; cmd/main (native app) docker-loads it on start
+  # (no registry needed on the NAS). amd64/x86 only.
   fpk:
     needs: build
     runs-on: ubuntu-latest
@@ -111,8 +111,9 @@ jobs:
         set -e
         docker buildx build --platform linux/amd64 --load \
           -t offlineu:local -f Dockerfile .
-        docker save offlineu:local -o fnos/offlineu/app/docker/offlineu-image.tar
-        ls -lh fnos/offlineu/app/docker/offlineu-image.tar
+        mkdir -p fnos/offlineu/app/images
+        docker save offlineu:local -o fnos/offlineu/app/images/offlineu-amd64.tar
+        ls -lh fnos/offlineu/app/images/offlineu-amd64.tar
 
     - name: Install fnpack
       run: |

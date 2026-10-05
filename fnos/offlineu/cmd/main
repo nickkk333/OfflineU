@@ -1,6 +1,117 @@
 #!/bin/bash
-# fnOS lifecycle hook. With the docker-project resource present, fnOS drives the
-# container via docker compose, so these hooks are no-ops that only report success.
-# The bundled image is loaded during installation by cmd/install_init (and
-# cmd/install_callback), so the container finds offlineu:local with pull_policy:never.
-exit 0
+# fnOS native-app lifecycle entry for OfflineU.
+#
+# We deliberately do NOT use fnOS's docker-project resource: fnOS runs
+# `docker compose up` during the install, BEFORE any lifecycle hook gets a chance
+# to `docker load` the bundled offline image, so it fails with
+# "No such image: offlineu:local".
+#
+# Instead this is a "native" app: this script owns the container. On start it
+# loads the bundled image tar (once) and then `docker run -d`. Networking is host
+# mode (the container binds the port itself), which is why manifest sets
+# checkport=false. This mirrors how other offline fnOS apps (e.g. MiBee NVR) work.
+set -u
+
+CONTAINER="offlineu"
+IMAGE="offlineu:local"
+
+# fnOS injects TRIM_* (see developer docs); fall back so the script also runs by hand.
+APPDEST="${TRIM_APPDEST:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
+PKGVAR="${TRIM_PKGVAR:-${APPDEST}/var}"
+LOG="${TRIM_TEMP_LOGFILE:-${PKGVAR}/offlineu-main.log}"
+mkdir -p "$PKGVAR" 2>/dev/null || true
+log() { echo "[$(date '+%F %T')] $*" >> "$LOG" 2>/dev/null; }
+
+# Install-wizard values arrive as environment variables (field name == var name).
+PORT="${OFFLINEU_HTTP_PORT:-5000}"
+COURSES="${OFFLINEU_COURSES:-/mnt/offlineu/courses}"
+TZ_VALUE="${OFFLINEU_TZ:-Asia/Shanghai}"
+# data is fixed: fnOS's per-app persistent dir (not user-configurable).
+DATA_DIR="${PKGVAR}/data"
+
+case "${TRIM_SYS_ARCH:-$(uname -m)}" in
+  x86_64|amd64|x64|x86) ARCH=amd64 ;;
+  aarch64|arm64|armv8*|arm) ARCH=arm64 ;;
+  *) ARCH=amd64 ;;
+esac
+
+# Locate the bundled image tar regardless of how fnOS maps the package tree.
+find_image() {
+  local c
+  for c in "${APPDEST}/images/offlineu-${ARCH}.tar" \
+           "${APPDEST}/app/images/offlineu-${ARCH}.tar" \
+           "$(dirname "${BASH_SOURCE[0]}")/../app/images/offlineu-${ARCH}.tar" \
+           "${APPDEST}/images/offlineu.tar"; do
+    [ -f "$c" ] && { echo "$c"; return 0; }
+  done
+  find "$APPDEST" -maxdepth 4 -name "offlineu-*.tar" 2>/dev/null | head -n1
+}
+
+# Marker records the tar's size_mtime so an UPGRADE (new tar, same :local tag)
+# triggers a reload instead of silently reusing the stale image.
+MARKER="${PKGVAR}/offlineu-image.marker"
+img_sig() { stat -c '%s_%Y' "$1" 2>/dev/null || echo ""; }
+
+ensure_image() {
+  local tar; tar="$(find_image)"
+  if [ -z "${tar:-}" ]; then
+    log "ERROR: bundled image tar not found under $APPDEST"
+    return 1
+  fi
+  local sig; sig="$(img_sig "$tar")"
+  if [ -f "$MARKER" ] && [ "$(cat "$MARKER" 2>/dev/null)" = "$sig" ] \
+     && docker image inspect "$IMAGE" >/dev/null 2>&1; then
+    log "image $IMAGE up to date (marker match)"
+    return 0
+  fi
+  log "docker load -i $tar"
+  if docker load -i "$tar" >> "$LOG" 2>&1; then
+    echo "$sig" > "$MARKER" 2>/dev/null || true
+    log "image loaded OK"
+    return 0
+  fi
+  log "ERROR: docker load failed"
+  return 1
+}
+
+is_running() {
+  [ "$(docker inspect -f '{{.State.Running}}' "$CONTAINER" 2>/dev/null)" = "true" ]
+}
+
+case "${1:-}" in
+  start)
+    if is_running; then log "already running"; exit 0; fi
+    ensure_image || exit 1
+    mkdir -p "$DATA_DIR" "$COURSES" 2>/dev/null || true
+    docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
+    log "docker run -d $IMAGE (host net, port $PORT, courses $COURSES)"
+    docker run -d --name "$CONTAINER" \
+      --restart unless-stopped \
+      --network host \
+      --user 0:0 \
+      -e OFFLINEU_HOST=0.0.0.0 \
+      -e "OFFLINEU_PORT=${PORT}" \
+      -e OFFLINEU_ROOTS=/courses \
+      -e OFFLINEU_PROGRESS_DIR=/app/data \
+      -e "TZ=${TZ_VALUE}" \
+      -v "${COURSES}:/courses:ro" \
+      -v "${DATA_DIR}:/app/data" \
+      "$IMAGE" >> "$LOG" 2>&1
+    rc=$?
+    if [ "$rc" -ne 0 ]; then log "ERROR: docker run failed rc=$rc"; exit 1; fi
+    sleep 2
+    if is_running; then log "started OK"; exit 0; fi
+    log "ERROR: container not running after start; recent logs:"
+    docker logs --tail 50 "$CONTAINER" >> "$LOG" 2>&1 || true
+    exit 1
+    ;;
+  stop)
+    docker stop "$CONTAINER" >> "$LOG" 2>&1 || true
+    docker rm -f "$CONTAINER" >> "$LOG" 2>&1 || true
+    exit 0
+    ;;
+  status)
+    if is_running; then exit 0; else exit 3; fi
+    ;;
+  *) exit 0 ;;
+esac

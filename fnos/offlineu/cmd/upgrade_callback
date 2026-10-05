@@ -1,4 +1,4 @@
 #!/bin/bash
-# fnOS lifecycle hook. For a Docker app the app center drives docker compose,
-# so these hooks are no-ops that only need to report success.
+# fnOS upgrade hook: ensure no stale container remains after files were replaced.
+docker rm -f offlineu >/dev/null 2>&1 || true
 exit 0

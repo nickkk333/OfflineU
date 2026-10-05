@@ -4,7 +4,7 @@
 # "应用包不符合系统要求"; the package must be produced by fnpack.
 #
 # Fully OFFLINE install: this script also builds the Docker image locally, exports
-# it to app/docker/offlineu-image.tar, and that tar is packed into the fpk. At
+# it to app/images/offlineu-amd64.tar, and that tar is packed into the fpk. At
 # install time cmd/main (native app) does `docker load` on it, so the NAS never
 # reaches out to any registry.
 #
@@ -20,7 +20,8 @@ $ErrorActionPreference = "Continue"
 $root       = Split-Path -Parent $MyInvocation.MyCommand.Path
 $repoRoot   = Split-Path -Parent $root          # OfflineU repo root (Dockerfile lives here)
 $app        = Join-Path $root "offlineu"
-$imgTar     = Join-Path (Join-Path (Join-Path $app "app") "docker") "offlineu-image.tar"
+$imgDir     = Join-Path (Join-Path $app "app") "images"
+$imgTar     = Join-Path $imgDir "offlineu-amd64.tar"
 $out        = Join-Path $root "offlineu_1.0.0_x86.fpk"
 $fnpack     = Join-Path $root "fnpack.exe"
 
@@ -57,6 +58,7 @@ Write-Host "==> Building docker image offlineu:local (linux/amd64) ..."
 cmd /c "docker build --platform linux/amd64 -t offlineu:local -f `"$dockerfile`" `"$repoRoot`" 2>&1"
 if ($LASTEXITCODE -ne 0) { throw "docker build failed" }
 Write-Host "==> Saving image to $imgTar ..."
+New-Item -ItemType Directory -Force -Path $imgDir | Out-Null
 cmd /c "docker save offlineu:local -o `"$imgTar`" 2>&1"
 if ($LASTEXITCODE -ne 0) { throw "docker save failed" }
 
