@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -283,8 +284,13 @@ func TestResolveInsideBlocksDirectoryEscapes(t *testing.T) {
 	if _, ok := ResolveInside(env.courseDir, "../secret.txt"); ok {
 		t.Error("parent traversal was allowed")
 	}
-	if _, ok := ResolveInside(env.courseDir, `..\secret.txt`); ok {
-		t.Error("windows style traversal was allowed")
+	// Backslash is the Windows path separator, so `..\` is a directory escape
+	// there. On Linux/macOS a backslash is an ordinary filename character, so
+	// `..\secret.txt` is a literal (non-escaping) name and must be allowed.
+	if runtime.GOOS == "windows" {
+		if _, ok := ResolveInside(env.courseDir, `..\secret.txt`); ok {
+			t.Error("windows style traversal was allowed")
+		}
 	}
 	inside, ok := ResolveInside(env.courseDir, "Section 1/02 - Notes.txt")
 	if !ok {
