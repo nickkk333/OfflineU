@@ -1,1 +1,22 @@
-{ "data-share": { "shares": [ { "name": "offlineu", "permission": "rw" } ] } }
+{
+    "docker-project": {
+        "projects": [
+            {
+                "name": "offlineu",
+                "path": "docker"
+            }
+        ]
+    },
+    "data-share": {
+        "shares": [
+            {
+                "name": "offlineu",
+                "permission": {
+                    "rw": [
+                        "offlineu"
+                    ]
+                }
+            }
+        ]
+    }
+}

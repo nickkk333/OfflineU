@@ -20,8 +20,10 @@ data/
 /image-dist/
 *.tar
 
-# ---- Built fnOS package artifacts (rebuilt locally via fnos/build-local.ps1) ----
+# ---- fnOS package artifacts & local build tool (rebuilt via fnos/build.ps1) ----
 *.fpk
+/fnos/fnpack.exe
+/fnos/fnpack
 
 # ---- Editors / OS ----
 .vscode/

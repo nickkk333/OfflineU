@@ -29,9 +29,14 @@ fnos/
 
 在 Actions 运行页下载该产物即可获得可安装的 fpk。
 
-> **为什么必须用 fnpack**：fpk 的 `app/` 在包内是 `app.tgz` 等特定结构，手工 `tar.gz`
-> 的平铺目录不被 fnOS 识别，安装会报「应用包不符合系统要求」。
-> 另外 `manifest` 的 `platform` 必须是 `x86`（或 `arm`），**不能写 `all`**。
+> **为什么必须用 fnpack**：fpk 的 `app/` 在包内是 `app.tgz`（而非平铺目录），手工 `tar.gz`
+> 不被 fnOS 识别，安装会报「应用包不符合系统要求」。此外还要求：
+> - `manifest` 的 `platform` 必须是 `x86`（或 `arm`），**不能写 `all`**；
+> - `cmd/` 需含全套生命周期脚本（`install_init` / `install_callback` / `uninstall_*` /
+>   `upgrade_*` / `config_*` / `main`）并带可执行位；Docker 应用里它们可为 `exit 0`；
+> - `config/resource` 对 Docker 应用必须声明 `docker-project`（指明 compose 项目名与路径），
+>   否则装好后容器不会被拉起；
+> - `wizard/install` 的字段用 `type:"text"` + `initValue`（不是 `string` / `defaultValue`）。
 
 ## 本地打包（可选）
 
