@@ -344,6 +344,50 @@ go run . --check-web # is the frontend bundle embedded?
 
 ---
 
+## 📦 Releases
+
+每次推送一个 `v*` tag（例如 `v2.0.0`），CI 会自动构建并发布一个 GitHub Release，附带以下资源：
+
+| 资源 | 平台 / 架构 | 说明 |
+| ---- | ----------- | ---- |
+| `offlineu-linux-amd64` | Linux x86_64 | 原生二进制，前端已内嵌 |
+| `offlineu-linux-arm64` | Linux ARM64（树莓派 / ARM NAS） | 同上 |
+| `offlineu-windows-amd64.exe` | Windows x86_64 | 同上 |
+| `offlineu_<version>_x86.fpk` | 飞牛OS / fnOS（amd64） | 应用包，内置镜像，离线安装 |
+| `checksums.txt` | — | SHA-256 校验和 |
+
+版本号统一跟随 git tag（`v2.0.0` → `2.0.0`）：二进制内的 `Version`、fpk 文件名与镜像 tag 全部同步。
+Docker 镜像同时推送到 GitHub Container Registry（`ghcr.io/nickkk333/offlineu`），tag 与 Release 版本一致，例如 `ghcr.io/nickkk333/offlineu:2.0.0`。
+
+### 飞牛OS / fnOS
+
+应用中心 → 手动安装 → 上传 `offlineu_<version>_x86.fpk`。镜像已打包进应用包，安装全程离线，无需镜像仓库。仅支持 amd64。
+
+### 原生二进制（Linux / Windows）
+
+直接运行对应可执行文件（前端已编译进二进制，无需 Node）：
+
+```bash
+./offlineu-linux-amd64 --host 0.0.0.0 --port 5000
+./offlineu-linux-arm64 --host 0.0.0.0 --port 5000
+.\offlineu-windows-amd64.exe --port 5000
+```
+
+> 实时转封装（MKV / MPEG-TS → 浏览器原生 MP4）依赖 ffmpeg：原生二进制首次播放会自动下载
+> 静态 ffmpeg，或自行安装并放入 PATH / 设置 `OFFLINEU_FFMPEG`。
+
+### Docker
+
+```bash
+docker pull ghcr.io/nickkk333/offlineu:2.0.0
+docker run -d --name offlineu -p 5000:5000 \
+  -v "/path/to/your/courses:/courses:ro" \
+  -v offlineu-data:/app/data \
+  ghcr.io/nickkk333/offlineu:2.0.0
+```
+
+---
+
 ## 🐳 Docker
 
 Nothing about your course folder is baked into the image: `/courses` is just the mount point it

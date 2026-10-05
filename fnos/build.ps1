@@ -22,7 +22,10 @@ $repoRoot   = Split-Path -Parent $root          # OfflineU repo root (Dockerfile
 $app        = Join-Path $root "offlineu"
 $imgDir     = Join-Path (Join-Path $app "app") "images"
 $imgTar     = Join-Path $imgDir "offlineu-amd64.tar"
-$out        = Join-Path $root "offlineu_1.0.0_x86.fpk"
+# Derive the package file name from the manifest version so it always tracks the release.
+$manifestText = Get-Content (Join-Path $app "manifest") -Raw
+if ($manifestText -match '(?m)^version\s*=\s*(\S+)') { $pkgVer = $Matches[1] } else { $pkgVer = "0.0.0" }
+$out        = Join-Path $root "offlineu_${pkgVer}_x86.fpk"
 $fnpack     = Join-Path $root "fnpack.exe"
 
 # 1) Ensure fnpack (Windows amd64) is available.
