@@ -1,4 +1,12 @@
 #!/bin/bash
-# fnOS lifecycle hook. For a Docker app the app center drives docker compose,
-# so these hooks are no-ops that only need to report success.
+# fnOS install hook (native app). Pre-load the bundled image so it is present
+# before the app is started for the first time. Idempotent: re-loading an
+# existing image is a cheap no-op.
+set -u
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+IMG="$SCRIPT_DIR/../app/docker/offlineu-image.tar"
+if [ -f "$IMG" ]; then
+  echo "pre-loading bundled image from $IMG"
+  docker load -i "$IMG"
+fi
 exit 0

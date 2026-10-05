@@ -1,18 +1,26 @@
 # Build the OfflineU fnOS package (.fpk) locally with the official fnpack tool.
 #
 # amd64 / x86 only. Do NOT hand-roll a tar.gz - fnOS rejects that structure with
-# "应用包不符合系统要求"; the package must be produced by fnpack. The package
-# carries the compose + metadata; its compose pulls ghcr.io/nickkk333/offlineu:main
-# (the image is built and pushed by the GitHub Actions workflow).
+# "应用包不符合系统要求"; the package must be produced by fnpack.
 #
-# The first run needs network to fetch fnpack from fnnas.com; after that it is
-# cached next to this script as fnpack.exe.
+# Fully OFFLINE install: this script also builds the Docker image locally, exports
+# it to app/docker/offlineu-image.tar, and that tar is packed into the fpk. At
+# install time cmd/main (native app) does `docker load` on it, so the NAS never
+# reaches out to any registry.
+#
+# Requirements:
+#   - Docker Desktop running in Linux-container mode (builds the amd64 image on
+#     Windows via --platform linux/amd64). Needs internet to pull base images at
+#     BUILD time only - the resulting fpk is offline for the NAS.
+#   - The first run also fetches fnpack from fnnas.com; cached as fnpack.exe.
 $ErrorActionPreference = "Stop"
 
-$root   = Split-Path -Parent $MyInvocation.MyCommand.Path
-$app    = Join-Path $root "offlineu"
-$out    = Join-Path $root "offlineu_1.0.0_x86.fpk"
-$fnpack = Join-Path $root "fnpack.exe"
+$root       = Split-Path -Parent $MyInvocation.MyCommand.Path
+$repoRoot   = Split-Path -Parent $root          # OfflineU repo root (Dockerfile lives here)
+$app        = Join-Path $root "offlineu"
+$imgTar     = Join-Path $app "app" "docker" "offlineu-image.tar"
+$out        = Join-Path $root "offlineu_1.0.0_x86.fpk"
+$fnpack     = Join-Path $root "fnpack.exe"
 
 # 1) Ensure fnpack (Windows amd64) is available.
 $fnpackCmd = $null
@@ -39,7 +47,26 @@ if (-not $fnpackCmd) {
     throw "fnpack unavailable. Download it from https://developer.fnnas.com/docs/cli/fnpack/ and place fnpack.exe next to this script."
 }
 
-# 2) Build. The manifest already pins platform=x86 (see offlineu/manifest).
+# 2) Build the Docker image (amd64) and export it into the package tree.
+Write-Host "==> Building docker image offlineu:local (linux/amd64) ..."
+docker build --platform linux/amd64 -t offlineu:local -f (Join-Path $repoRoot "Dockerfile") $repoRoot
+Write-Host "==> Saving image to $imgTar ..."
+docker save offlineu:local -o $imgTar
+
+# 3) Normalize text files to LF so the bash scripts run under fnOS (Linux).
+#    git's autocrlf would otherwise inject CRLF, breaking the `#!/bin/bash` shebang.
+Write-Host "==> Normalizing line endings to LF ..."
+Get-ChildItem -Path $app -Recurse -File | Where-Object {
+    $_.Extension -notin @('.png', '.tar')
+} | ForEach-Object {
+    $content = [System.IO.File]::ReadAllText($_.FullName)
+    if ($content -match "`r") {
+        $lf = $content -replace "`r`n", "`n" -replace "`r", "`n"
+        [System.IO.File]::WriteAllText($_.FullName, $lf)
+    }
+}
+
+# 4) Pack with fnpack. The manifest already pins platform=x86 (see offlineu/manifest).
 Write-Host "==> Building fpk ..."
 Push-Location $app
 try {

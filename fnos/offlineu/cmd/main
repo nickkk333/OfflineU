@@ -1,14 +1,42 @@
 #!/bin/bash
-# fnOS 应用生命周期入口。Docker 类应用的启停由应用中心直接执行 compose，
-# 这里 start/stop 只需返回成功；status 用 offlineu 容器的运行状态代表应用状态。
+# fnOS native-app lifecycle entry.
+#
+# We deliberately do NOT use fnOS's `docker-project` resource: it runs
+# `docker compose up` before any lifecycle hook, so an offline image bundled in
+# the package could not be `docker load`-ed in time (No such image). Instead this
+# app is "native": this script owns the container, loading the bundled image tar
+# first and then driving compose.
 set -u
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+APP_DIR="$SCRIPT_DIR/../app/docker"
+COMPOSE="$APP_DIR/docker-compose.yaml"
+IMG="$APP_DIR/offlineu-image.tar"
+PROJECT="offlineu"
 CONTAINER="offlineu"
+
+load_image() {
+  if [ -f "$IMG" ]; then
+    echo "loading bundled image from $IMG"
+    docker load -i "$IMG"
+  fi
+}
+
 is_running() {
   [ "$(docker inspect -f '{{.State.Running}}' "$CONTAINER" 2>/dev/null)" = "true" ]
 }
+
 case "${1:-}" in
-  start) exit 0 ;;
-  stop) exit 0 ;;
-  status) if is_running; then exit 0; else exit 3; fi ;;
+  start)
+    load_image
+    ( cd "$APP_DIR" && docker compose --project-name "$PROJECT" -f "$COMPOSE" up -d )
+    exit 0
+    ;;
+  stop)
+    ( cd "$APP_DIR" && docker compose --project-name "$PROJECT" -f "$COMPOSE" stop ) 2>/dev/null || true
+    exit 0
+    ;;
+  status)
+    if is_running; then exit 0; else exit 3; fi
+    ;;
   *) exit 0 ;;
 esac

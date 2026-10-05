@@ -90,9 +90,10 @@ jobs:
         cache-from: type=gha
         cache-to: type=gha,mode=max
 
-  # Build the fnOS .fpk with the official fnpack tool. The package only carries
-  # the compose + metadata (not the image); its compose pulls
-  # ghcr.io/nickkk333/offlineu:main, which the "build" job pushes. amd64/x86 only.
+  # Build the fnOS .fpk with the official fnpack tool. Fully offline: the Docker
+  # image is built locally here and exported to app/docker/offlineu-image.tar so
+  # it ships inside the package; cmd/main loads it at install time (no registry
+  # needed on the NAS). amd64/x86 only.
   fpk:
     needs: build
     runs-on: ubuntu-latest
@@ -101,6 +102,17 @@ jobs:
     steps:
     - name: Checkout repository
       uses: actions/checkout@v4
+
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+
+    - name: Build and export the image into the package
+      run: |
+        set -e
+        docker buildx build --platform linux/amd64 --load \
+          -t offlineu:local -f Dockerfile .
+        docker save offlineu:local -o fnos/offlineu/app/docker/offlineu-image.tar
+        ls -lh fnos/offlineu/app/docker/offlineu-image.tar
 
     - name: Install fnpack
       run: |
