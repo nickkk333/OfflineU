@@ -2,6 +2,7 @@
 import { computed, ref } from 'vue'
 import DirectoryBrowser from '../components/DirectoryBrowser.vue'
 import { forgetCourse, loadCourse, refreshState, store } from '../store.js'
+import { reloadPage } from '../api.js'
 import { t } from '../i18n.js'
 import { useToast } from '../composables/useToast.js'
 
@@ -14,6 +15,8 @@ async function openRecent(path) {
   try {
     const payload = await loadCourse(path)
     toast.success(t('toast.loaded', { name: payload.course_name }))
+    // A course switch must reset all in-memory state: hard-reload the page.
+    reloadPage()
   } catch (error) {
     toast.error(error.message)
   } finally {
@@ -32,6 +35,8 @@ async function loadFromInput() {
     const payload = await loadCourse(value)
     toast.success(t('toast.loaded', { name: payload.course_name }))
     manualPath.value = ''
+    // A course switch must reset all in-memory state: hard-reload the page.
+    reloadPage()
   } catch (error) {
     toast.error(error.message)
   } finally {

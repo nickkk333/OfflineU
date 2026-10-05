@@ -50,44 +50,62 @@ dependencies.
 
 ---
 
-## 🛠️ Installation
+## 🛠️ Build & run
 
-### 📦 Build from source (one binary)
+OfflineU ships as **one static Go binary** with the Vue frontend embedded in it, so the
+runtime needs neither Python nor Node.
 
-Requirements: [Go 1.23+](https://go.dev/dl/) and [Node 20+](https://nodejs.org/) — Node is only
-needed to build the frontend.
+### Prerequisites
+
+* **Go 1.23+** — `go version` (the Dockerfile and CI use Go 1.24; any 1.23/1.24 works).
+* **Node 22+** — only to build the frontend (`web/dist`). The bundle is embedded at compile
+  time via `//go:embed all:web/dist`, so `go build` needs it (or use `--web-dir` at runtime).
+
+### 1. Build the frontend
 
 ```bash
-git clone https://github.com/nickkk333/OfflineU.git
-cd OfflineU
+cd web
+npm install
+npm run build      # writes web/dist
+cd ..
 ```
 
-1. Build the frontend into `web/dist` (it is embedded into the binary):
-
-   ```bash
-   cd web
-   npm install
-   npm run build
-   cd ..
-   ```
-
-2. Build (and verify) the binary:
-
-   ```bash
-   go build -o offlineu .
-   ./offlineu --check-web        # prints "Frontend assets OK" and exits
-   ```
-
-3. Run it, pointing OfflineU at your course folder:
-
-   ```bash
-   ./offlineu "/path/to/My Course"      # Windows: .\offlineu.exe "D:\Courses\My Course"
-   ```
-
-4. Open <http://127.0.0.1:5000>. Without a path argument OfflineU restores the last course it
-   opened; with no remembered course you get the folder picker.
-
 > `web/dist` always exists in the repository (kept by a tracked `.gitkeep`), so `go build`
+> works even before you run `npm run build` — you would just see the API-only notice.
+
+### 2. Build the binary
+
+```bash
+go build -o offlineu .
+./offlineu --check-web     # verify the embedded bundle, then exit
+```
+
+Inject the version (it appears in `--help` and the API; CI sets it from the git tag):
+
+```bash
+go build -trimpath -ldflags="-s -w -X github.com/nickkk333/offlineu/internal/offlineu.Version=1.2.3" -o offlineu .
+```
+
+Cross-compile for another OS/arch — the binary is fully static (`CGO_ENABLED=0`):
+
+```bash
+CGO_ENABLED=0 GOOS=linux   GOARCH=arm64 go build -o offlineu-linux-arm64 .
+CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -o offlineu.exe .
+```
+
+### 3. Run it
+
+```bash
+./offlineu "/path/to/My Course"      # Windows: .\offlineu.exe "D:\Courses\My Course"
+```
+
+Open <http://127.0.0.1:5000>. Without a path argument OfflineU restores the last opened
+course (or shows the folder picker when none is remembered). Useful flags: `--host 0.0.0.0`
+to expose on the LAN, `--port 5000` for another port — both have `OFFLINEU_HOST` /
+`OFFLINEU_PORT` env equivalents. See **⚙️ Configuration** for the full list.
+
+For hot-reload development (Vite + the real Go API) see **👩‍💻 Development** below. To run a
+production build from disk without recompiling, pass `--web-dir web/dist`.
 
 ---
 
@@ -344,9 +362,30 @@ go run . --check-web # is the frontend bundle embedded?
 
 ---
 
-## 📦 Releases
+## 🏷️ Tagging & releases
 
-每次推送一个 `v*` tag（例如 `v2.0.0`），CI 会自动构建并发布一个 GitHub Release，附带以下资源：
+### When to tag
+
+Cut a release by pushing a tag that matches `v*` (e.g. `v1.2.3`) to `main`/`master`. The CI
+workflow (`.github/workflows/docker-build.yml`) then builds, tests and publishes a GitHub
+Release automatically — no manual upload. Use **semantic versioning**:
+
+* `vMAJOR.0.0` — breaking change / major milestone
+* `vMAJOR.MINOR.0` — new features, backwards compatible
+* `vMAJOR.MINOR.PATCH` — bug fixes / small changes only
+
+```bash
+git tag v1.2.3
+git push origin v1.2.3
+```
+
+> A push to `main`/`master **without** a tag only runs the test + build + image jobs (the
+> image is tagged `:main`); no GitHub Release is created and the binaries are short-lived
+> artifacts.
+
+### What the release contains
+
+每次推送一个 `v*` tag，Release 会自动附带以下资源：
 
 | 资源 | 平台 / 架构 | 说明 |
 | ---- | ----------- | ---- |
@@ -356,8 +395,21 @@ go run . --check-web # is the frontend bundle embedded?
 | `offlineu_<version>_x86.fpk` | 飞牛OS / fnOS（amd64） | 应用包，内置镜像，离线安装 |
 | `checksums.txt` | — | SHA-256 校验和 |
 
-版本号统一跟随 git tag（`v2.0.0` → `2.0.0`）：二进制内的 `Version`、fpk 文件名与镜像 tag 全部同步。
-Docker 镜像同时推送到 GitHub Container Registry（`ghcr.io/nickkk333/offlineu`），tag 与 Release 版本一致，例如 `ghcr.io/nickkk333/offlineu:2.0.0`。
+### Version flow
+
+The version is taken from the git tag (`v2.0.0` → `2.0.0`) and injected everywhere at build
+time, so every artifact of a release shares the same number:
+
+* **Binary** — `go build -ldflags="-X .../internal/offlineu.Version=2.0.0"`; shown in `--help`
+  and the API (`/api/state` → `version`).
+* **Docker image** — pushed to GitHub Container Registry as `ghcr.io/nickkk333/offlineu:2.0.0`,
+  plus the rolling tags `:2.0`, `:2` and `:main` (`:main` is only on branch builds).
+* **fnOS package** — `offlineu_2.0.0_x86.fpk`; CI pins the `manifest` version to the tag (a
+  branch build keeps `0.0.0-dev`).
+* **`checksums.txt`** — SHA-256 of every attached asset, for verifying downloads.
+
+> Branch / PR builds that are not a tag fall back to `0.0.0-dev` everywhere, so local or CI
+> test builds never collide with a real release number.
 
 ### 飞牛OS / fnOS
 
@@ -393,6 +445,43 @@ docker run -d --name offlineu -p 5000:5000 \
 Nothing about your course folder is baked into the image: `/courses` is just the mount point it
 expects. Map your own folder onto it and progress is kept in `/app/data` so the course mount can
 stay read-only.
+
+### Build the image locally
+
+The image is a three-stage build (Node → Go → Alpine) and embeds the frontend **plus**
+ffmpeg, so it is fully self-contained (~tens of MB, no Python/Node at runtime). Build it
+straight from the repo root:
+
+```bash
+docker build -t offlineu .
+```
+
+Inject the version the same way CI does (it becomes the binary's `Version` and shows in the
+UI/API):
+
+```bash
+docker build --build-arg VERSION=1.2.3 -t offlineu:1.2.3 .
+```
+
+Multi-arch (amd64 + arm64) with Buildx — push to a registry, or just load it back locally:
+
+```bash
+docker buildx build --platform linux/amd64,linux/arm64 \
+  --build-arg VERSION=1.2.3 -t offlineu:1.2.3 --load .
+```
+
+Run your locally built image (the `:main` tag in the examples below can be swapped for
+`offlineu:1.2.3`):
+
+```bash
+docker run -d --name offlineu -p 5000:5000 \
+  -v "/path/to/your/courses:/courses:ro" \
+  -v offlineu-data:/app/data \
+  offlineu:1.2.3
+```
+
+> Packaging for fnOS (`.fpk`) reuses exactly this image — see `fnos/README.md`
+> (`fnos/build.ps1` builds it locally and exports it into the offline package).
 
 ```bash
 docker run -d --name offlineu -p 5000:5000 \
@@ -700,9 +789,6 @@ MIT License — use freely, modify locally, share widely.
 Originally built with ❤️ by [@WhiskeyCoder](https://github.com/WhiskeyCoder) as a Python/Flask
 application; this version is a Go + Vue 3 rewrite that keeps the same features and API.
 Inspired by the dream of **learning freely, offline, and without limits.**
-
-
-> works even before you run `npm run build` — you would just see the API-only notice.
 
 ---
 

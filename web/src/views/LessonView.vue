@@ -5,7 +5,7 @@ import TypeIcon from '../components/TypeIcon.vue'
 import LanguageSwitch from '../components/LanguageSwitch.vue'
 import CastMenu from '../components/CastMenu.vue'
 import CastBar from '../components/CastBar.vue'
-import { api, formatTime, lessonRoute } from '../api.js'
+import { api, formatTime, lessonRoute, navigateFull } from '../api.js'
 import { t, translateServerMessage } from '../i18n.js'
 import { useToast } from '../composables/useToast.js'
 import { useCast } from '../composables/useCast.js'
@@ -327,14 +327,16 @@ onBeforeUnmount(() => {
     <div v-else-if="error" class="card empty-state">
       <div class="empty-state__icon">⚠️</div>
       <p>{{ error }}</p>
-      <RouterLink class="btn btn--ghost" style="margin-top: 14px" to="/">
+      <button type="button" class="btn btn--ghost" style="margin-top: 14px" @click="navigateFull('/')">
         {{ t('common.backToDashboard') }}
-      </RouterLink>
+      </button>
     </div>
 
     <template v-else-if="lesson">
       <header class="lesson-view__bar">
-        <RouterLink class="btn btn--ghost btn--sm" to="/">{{ t('common.backToCourse') }}</RouterLink>
+        <button type="button" class="btn btn--ghost btn--sm" @click="navigateFull('/')">
+          {{ t('common.backToCourse') }}
+        </button>
         <TypeIcon :type="lesson.lesson_type" />
         <span class="spacer"></span>
         <span class="badge">{{ positionLabel }}</span>

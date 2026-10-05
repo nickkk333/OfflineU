@@ -92,3 +92,16 @@ export function formatTime(totalSeconds) {
   const hours = Math.floor(minutes / 60)
   return `${hours}:${String(minutes % 60).padStart(2, '0')}:${rest}`
 }
+
+// Full page reload / navigation helpers. The SPA normally does in-place route
+// changes, but a few flows must discard all in-memory state (the current <video>
+// must stop, the cast poll must restart): a cast starting, going back, or
+// switching courses. A hard reload is the simplest way to guarantee that.
+export function reloadPage() {
+  if (typeof window !== 'undefined') window.location.reload()
+}
+
+// Navigate to a path with a full page load (not an SPA route change).
+export function navigateFull(path = '/') {
+  if (typeof window !== 'undefined') window.location.assign(path)
+}

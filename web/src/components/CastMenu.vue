@@ -3,7 +3,7 @@
 // Kodi, …). The Go backend does the SSDP search and the SOAP calls - the SPA
 // only picks a device and asks for it.
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
-import { api, formatTime } from '../api.js'
+import { api, formatTime, reloadPage } from '../api.js'
 import { t } from '../i18n.js'
 import { useToast } from '../composables/useToast.js'
 
@@ -129,6 +129,9 @@ async function cast(device) {
       toast.success(t('toast.castStarted', { title: props.lesson.title, device: activeName.value }))
     }
     emit('casted')
+    // The lesson now plays on the TV: drop the in-browser player and reload so
+    // the page reflects the cast session cleanly (browser playback stops).
+    reloadPage()
   } catch (cause) {
     toast.error(cause.message)
   } finally {
