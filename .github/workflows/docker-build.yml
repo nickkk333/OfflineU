@@ -89,3 +89,54 @@ jobs:
         labels: ${{ steps.meta.outputs.labels }}
         cache-from: type=gha
         cache-to: type=gha,mode=max
+
+  # Build the fnOS .fpk with the official fnpack tool. The package only carries
+  # the compose + metadata (not the image); its compose pulls
+  # ghcr.io/nickkk333/offlineu:main, which the "build" job pushes. amd64/x86 only.
+  fpk:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Install fnpack
+      run: |
+        set -e
+        for V in 1.2.3 1.2.1 1.2.0; do
+          if curl -fsSL "https://static2.fnnas.com/fnpack/fnpack-${V}-linux-amd64" -o fnpack; then
+            echo "using fnpack ${V}"; FNPACK_VERSION="${V}"; break
+          fi
+        done
+        chmod +x fnpack
+        sudo mv fnpack /usr/local/bin/fnpack
+        fnpack --help >/dev/null 2>&1 || true
+
+    - name: Pin manifest to x86
+      working-directory: fnos/offlineu
+      run: |
+        sed -i 's/^platform[[:space:]]*=.*/platform = x86/' manifest
+        grep -E '^(appname|version|platform) ' manifest
+
+    - name: Build fpk
+      working-directory: fnos/offlineu
+      run: |
+        set -e
+        fnpack build
+        mv ./*.fpk "$GITHUB_WORKSPACE/offlineu_1.0.0_x86.fpk"
+        ls -l "$GITHUB_WORKSPACE/offlineu_1.0.0_x86.fpk"
+
+    - name: Upload fpk artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: offlineu-fpk-x86
+        path: offlineu_1.0.0_x86.fpk
+        retention-days: 30
+
+    - name: Attach fpk to release
+      if: startsWith(github.ref, 'refs/tags/')
+      uses: softprops/action-gh-release@v2
+      with:
+        files: offlineu_1.0.0_x86.fpk

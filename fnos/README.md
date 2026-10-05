@@ -1,55 +1,59 @@
 # OfflineU 飞牛OS（fnOS）应用包
 
-本目录把 OfflineU 打包成飞牛OS 应用中心可直接安装的 `.fpk` 包。
+本目录把 OfflineU 打包成飞牛OS 应用中心可直接安装的 `.fpk` 包（仅 **amd64 / x86**）。
 
 ## 目录结构
 
 ```
 fnos/
 ├── offlineu/                 # fnOS 应用工程（fnpack 期望的源树）
-│   ├── manifest             # 应用元信息（appname/version/端口等）
+│   ├── manifest             # 应用元信息（appname/version/platform=x86/端口等）
 │   ├── ICON.PNG             # 64×64 图标
 │   ├── ICON_256.PNG         # 256×256 图标
-│   ├── app/docker/docker-compose.yaml  # 实际运行的容器（本地镜像 offlineu:local）
+│   ├── app/docker/docker-compose.yaml  # 实际运行的容器（引用 ghcr 镜像）
 │   ├── cmd/main             # 生命周期入口（start/stop/status）
 │   ├── config/privilege     # 运行身份
 │   ├── config/resource      # 共享目录声明
 │   └── wizard/install       # 安装向导（端口、时区）
-├── offlineu-1.0.0.fpk       # 已构建的安装包
-├── offlineu-1.0.0-image.tar # 本地构建出的镜像（需先导入 fnOS）
-├── build.ps1                # 仅打包 fpk（镜像需已存在）
-└── build-local.ps1          # 一键本地构建：镜像 + 导出 + 打包 fpk
+└── build.ps1                # 本地打包（Windows，自动下载官方 fnpack）
 ```
 
-## 本地构建（不依赖 GitHub / CI / 任何镜像仓库）
+## 打包（推荐：GitHub Actions）
 
-全程在本机完成，`docker build` 出镜像后打本地 tag `offlineu:local`，compose 用
-`pull_policy: never` 引用它，因此安装时**不会联网拉取**任何镜像。
+`.github/workflows/docker-build.yml` 在推送时自动完成：
+
+1. 构建并推送镜像 `ghcr.io/nickkk333/offlineu:main`（仅 `linux/amd64`，内置 ffmpeg）；
+2. 用官方 `fnpack` 把 `offlineu/` 打成 `offlineu_1.0.0_x86.fpk`；
+3. 把 fpk 上传为构建产物（Actions 运行页 → Artifacts，名称 `offlineu-fpk-x86`）；
+   打 `v*` tag 时还会自动附加到对应 GitHub Release。
+
+在 Actions 运行页下载该产物即可获得可安装的 fpk。
+
+> **为什么必须用 fnpack**：fpk 的 `app/` 在包内是 `app.tgz` 等特定结构，手工 `tar.gz`
+> 的平铺目录不被 fnOS 识别，安装会报「应用包不符合系统要求」。
+> 另外 `manifest` 的 `platform` 必须是 `x86`（或 `arm`），**不能写 `all`**。
+
+## 本地打包（可选）
+
+Windows 下脚本会自动下载官方 `fnpack`（来自 `static2.fnnas.com`）并打包：
 
 ```powershell
 cd fnos
-.\build-local.ps1
+.\build.ps1            # 产物 fnos\offlineu_1.0.0_x86.fpk
 ```
-
-脚本依次执行：
-
-1. `docker build --platform linux/amd64 -t offlineu:local -f Dockerfile .`（含前端构建 + 内置 ffmpeg）。
-2. `docker save offlineu:local -o offlineu-1.0.0-image.tar`（导出镜像，供 fnOS 离线导入）。
-3. 用 `fnpack build` 打包 `fnos/offlineu/` 为 `offlineu-1.0.0.fpk`（无 `fnpack` 时退化为 tar.gz）。
-
-要求本机已安装并启动 Docker（Windows 上即 Docker Desktop，且处于 Linux 容器模式）。
-
-若只想重新打包 fpk（镜像已存在），可单独运行 `.\build.ps1`。
 
 ## 安装
 
-1. 飞牛OS → 镜像 → 导入 → 选择 `fnos\offlineu-1.0.0-image.tar`，导入后得到镜像 `offlineu:local`。
-2. 飞牛OS → 应用中心 → 手动安装 → 上传 `fnos\offlineu-1.0.0.fpk`。
-3. 向导中设置对外端口（默认 5000）与时区。
-4. 安装完成后，把课程文件夹放入应用对应的 `courses` 共享目录（只读挂载到容器内 `/courses`），
+1. 飞牛OS → 应用中心 → 手动安装 → 上传 `offlineu_1.0.0_x86.fpk`。
+2. 向导中设置对外端口（默认 5000）与时区。
+3. 首次启动会拉取镜像 `ghcr.io/nickkk333/offlineu:main`（amd64）；
+   若拉取缓慢/失败，请为 Docker 配置国内镜像加速，或在能联网的机器上拉取后导入。
+4. 把课程文件夹放入应用对应的 `courses` 共享目录（只读挂载到容器内 `/courses`），
    浏览器打开 `http://<NAS IP>:<端口>` 即可播放；MKV / 伪 .mp4(MPEG-TS) 等会被服务端实时
    remux 为可拖动的 MP4。
 
-> 注意：compose 写的是 `image: offlineu:local` 且 `pull_policy: never`，**必须先在步骤 1 导入
-> 镜像**，否则安装会报找不到镜像。若改用在线镜像，把 compose 改回 `ghcr.io/nickkk333/offlineu:main`
-> 并设 `pull_policy: always` 即可。
+## 常见报错
+
+- **应用包不符合系统要求**：fpk 不是 `fnpack` 生成的，或 `manifest` 的 `platform` 不是
+  `x86`/`arm`。
+- **安装后容器起不来**：多为 ghcr 拉取失败，检查网络或改用镜像加速。
