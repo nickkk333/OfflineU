@@ -630,7 +630,7 @@ func (a *App) handleForgetCourse(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if forgotten := r.URL.Query().Get("path"); forgotten != "" {
-		a.Store.Forget(forgotten)
+		a.forgetCourse(forgotten)
 	}
 	http.Redirect(w, r, "/", http.StatusFound)
 }
@@ -651,8 +651,40 @@ func (a *App) handleForgetCourseAPI(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "path is required")
 		return
 	}
-	a.Store.Forget(payload.Path)
+	a.forgetCourse(payload.Path)
 	writeJSON(w, http.StatusOK, map[string]any{"success": true})
+}
+
+// forgetCourse drops a course from the recent list *and* deletes its stored
+// progress, so opening the folder again starts from scratch: the X button in
+// the picker must really remove the course, not only hide it.
+//
+// The path is resolved exactly like ScanCourse does (abs + symlinks), so the
+// derived progress file matches the one the course was written to. The file
+// name itself is computed by the server and only courses inside OFFLINEU_ROOTS
+// lose their data, so a crafted request cannot delete an arbitrary file.
+func (a *App) forgetCourse(raw string) {
+	coursePath := strings.TrimSpace(raw)
+	if coursePath == "" {
+		return
+	}
+	if absolute, err := filepath.Abs(ExpandHome(coursePath)); err == nil {
+		coursePath = absolute
+	}
+	if resolved, err := filepath.EvalSymlinks(coursePath); err == nil {
+		coursePath = resolved
+	}
+	coursePath = filepath.Clean(coursePath)
+
+	// The recent list entry goes first: forgetting must work even when the
+	// folder sits outside OFFLINEU_ROOTS (it simply stops being offered).
+	a.Store.Forget(coursePath)
+	if !a.Config.InsideRoots(coursePath) {
+		return
+	}
+	if err := a.Progress.Delete(a.Config.ProgressFileFor(coursePath)); err != nil {
+		logf("warning: cannot delete the progress of %s: %v", coursePath, err)
+	}
 }
 
 // handleDLNADevices lists the media renderers (TVs, speakers, …) that answered

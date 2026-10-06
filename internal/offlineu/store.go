@@ -151,7 +151,8 @@ func (s *CourseStore) SetRecentTotals(entries []RecentCourse) {
 	}
 }
 
-// Forget drops a single course from the recent list (never from disk).
+// Forget drops a single course from the recent list. The course folder itself
+// is never touched; its stored progress file is deleted by App.forgetCourse.
 func (s *CourseStore) Forget(path string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

@@ -174,7 +174,7 @@ stays scriptable:
 | GET    | `/subtitles/<path>`                     | Serve subtitles as WebVTT (converts SRT on the fly)             |
 | GET    | `/health`                               | `{"status": "healthy"}` (used by Docker health checks)          |
 | POST   | `/api/reset_course`                     | Back to the picker; the course stays in the recent list         |
-| POST   | `/api/forget_course`                    | `{"path": "..."}` — remove one entry from the recent list       |
+| POST   | `/api/forget_course`                    | `{"path": "..."}` — drop the course from the recent list and delete its stored progress       |
 | GET    | `/reset_course`, `/forget_course`       | Legacy redirect variants of the two endpoints above             |
 | GET    | `/api/dlna/devices`                     | Renderers found on the LAN (`?refresh=1` repeats the SSDP search) |
 | POST   | `/api/dlna/cast`                        | `{"device": "<udn>", "lesson_path": "...", "start_seconds": 30, "transcode": "auto"\|"on"\|"off"}` — push a lesson to a renderer; `converted` in the answer says whether a stream was used |

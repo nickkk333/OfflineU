@@ -1,5 +1,5 @@
 <script setup>
-import { computed, ref } from 'vue'
+import { computed, nextTick, ref, watch } from 'vue'
 import DirectoryBrowser from '../components/DirectoryBrowser.vue'
 import { forgetCourse, loadCourse, refreshState, store } from '../store.js'
 import { reloadPage } from '../api.js'
@@ -9,6 +9,12 @@ import { useToast } from '../composables/useToast.js'
 const toast = useToast()
 const manualPath = ref('')
 const loading = ref(false)
+
+// Removal now deletes the stored progress too, so it asks first: pendingForget
+// holds the course the user is about to remove (null = dialog closed).
+const pendingForget = ref(null)
+const removing = ref(false)
+const cancelButton = ref(null)
 
 async function openRecent(path) {
   loading.value = true
@@ -44,14 +50,35 @@ async function loadFromInput() {
   }
 }
 
-async function forget(path) {
+function askRemove(recent) {
+  pendingForget.value = { path: recent.path, name: recent.name }
+}
+
+function cancelForget() {
+  if (removing.value) return
+  pendingForget.value = null
+}
+
+async function confirmForget() {
+  if (!pendingForget.value || removing.value) return
+  removing.value = true
   try {
-    await forgetCourse(path)
+    await forgetCourse(pendingForget.value.path)
     toast.info(t('toast.removedFromRecent'))
+    pendingForget.value = null
   } catch (error) {
     toast.error(error.message)
+  } finally {
+    removing.value = false
   }
 }
+
+// The dialog opens on the safe button (Cancel) and closes with Escape.
+watch(pendingForget, async (value) => {
+  if (!value) return
+  await nextTick()
+  cancelButton.value?.focus()
+})
 
 // Completion percentage of a remembered course (0 when it was never parsed).
 function percentOf(recent) {
@@ -176,7 +203,7 @@ function rootStateLabel(status) {
             type="button"
             class="icon-btn"
             :title="t('common.remove')"
-            @click="forget(recent.path)"
+            @click="askRemove(recent)"
           >
             ✕
           </button>
@@ -257,6 +284,41 @@ function rootStateLabel(status) {
       </div>
     </section>
   </div>
+  <Teleport to="body">
+    <Transition name="confirm">
+      <div
+        v-if="pendingForget"
+        class="confirm-backdrop"
+        @click.self="cancelForget"
+        @keydown.esc="cancelForget"
+      >
+        <div class="confirm" role="alertdialog" aria-modal="true" aria-labelledby="confirm-title">
+          <div id="confirm-title" class="confirm__title">{{ t('picker.removeConfirmTitle') }}</div>
+          <p class="confirm__text">{{ t('picker.removeConfirmText', { name: pendingForget.name }) }}</p>
+          <span class="confirm__path mono">{{ pendingForget.path }}</span>
+          <div class="confirm__actions">
+            <button
+              ref="cancelButton"
+              type="button"
+              class="btn btn--ghost"
+              :disabled="removing"
+              @click="cancelForget"
+            >
+              {{ t('common.cancel') }}
+            </button>
+            <button
+              type="button"
+              class="btn btn--danger"
+              :disabled="removing"
+              @click="confirmForget"
+            >
+              {{ t('picker.removeConfirmAction') }}
+            </button>
+          </div>
+        </div>
+      </div>
+    </Transition>
+  </Teleport>
 </template>
 
 <style scoped>
@@ -410,5 +472,72 @@ function rootStateLabel(status) {
 
 .tips strong {
   color: var(--text);
+}
+/* Remove-course confirmation dialog -------------------------------------- */
+.confirm-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 9998;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: rgba(2, 6, 23, 0.72);
+  backdrop-filter: blur(6px);
+}
+
+.confirm {
+  width: min(440px, 100%);
+  padding: 22px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+
+.confirm__title {
+  font-size: 1.05rem;
+  font-weight: 700;
+}
+
+.confirm__text {
+  margin-top: 10px;
+  color: var(--text-muted);
+  font-size: 0.9rem;
+  line-height: 1.6;
+}
+
+.confirm__path {
+  display: block;
+  margin-top: 8px;
+  font-size: 0.78rem;
+  color: var(--text-faint);
+  word-break: break-all;
+}
+
+.confirm__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 18px;
+}
+
+.confirm-enter-active,
+.confirm-leave-active {
+  transition: opacity 180ms ease;
+}
+
+.confirm-enter-active .confirm,
+.confirm-leave-active .confirm {
+  transition: transform 180ms ease;
+}
+
+.confirm-enter-from,
+.confirm-leave-to {
+  opacity: 0;
+}
+
+.confirm-enter-from .confirm,
+.confirm-leave-to .confirm {
+  transform: translateY(10px) scale(0.97);
 }
 </style>

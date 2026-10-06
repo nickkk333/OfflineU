@@ -3,6 +3,7 @@ package offlineu
 import (
 	"net/http"
 	"net/url"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -234,5 +235,43 @@ func TestHealthAndResetCourse(t *testing.T) {
 	env.decode(env.request(http.MethodGet, "/api/state", nil), &state)
 	if len(state.Recent) != 1 || state.Recent[0].Name != "Python Tutorial" {
 		t.Errorf("recent courses = %+v", state.Recent)
+	}
+}
+
+func TestForgetCourseDeletesProgressSoReopeningStartsFresh(t *testing.T) {
+	env := newTestEnv(t)
+	course := env.loadCourse()
+	if response := env.request(http.MethodPost, "/api/progress", map[string]any{
+		"lesson_path": "Section 1/01 - Intro.mp4/Intro", "completed": true, "progress_seconds": 90,
+	}); response.Code != http.StatusOK {
+		t.Fatalf("saving progress failed: %d %s", response.Code, response.Body.String())
+	}
+	progressFile := env.app.Config.ProgressFileFor(course.Path)
+	if _, err := os.Stat(progressFile); err != nil {
+		t.Fatalf("progress file should exist before forgetting: %v", err)
+	}
+
+	response := env.request(http.MethodPost, "/api/forget_course", map[string]string{"path": course.Path})
+	if response.Code != http.StatusOK {
+		t.Fatalf("forget status = %d %s", response.Code, response.Body.String())
+	}
+	if _, err := os.Stat(progressFile); !os.IsNotExist(err) {
+		t.Errorf("progress file was not deleted: %v", err)
+	}
+	if payload := env.state(); len(payload.Recent) != 0 {
+		t.Errorf("course is still in the recent list: %+v", payload.Recent)
+	}
+
+	// opening the folder again must start from scratch
+	if response := env.request(http.MethodPost, "/load_course",
+		map[string]string{"course_path": course.Path}); response.Code != http.StatusOK {
+		t.Fatalf("reloading failed: %d", response.Code)
+	}
+	state := struct {
+		Stats Stats `json:"stats"`
+	}{}
+	env.decode(env.request(http.MethodGet, "/api/state", nil), &state)
+	if state.Stats.CompletedLessons != 0 {
+		t.Errorf("progress survived the forget: %+v", state.Stats)
 	}
 }

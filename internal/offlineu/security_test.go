@@ -115,6 +115,30 @@ func TestLegacyRedirectsStillWork(t *testing.T) {
 	}
 }
 
+func TestForgettingAPathOutsideRootsKeepsItsProgressFile(t *testing.T) {
+	env := newTestEnv(t)
+	env.loadCourse()
+
+	// a plausible progress file belonging to a course outside OFFLINEU_ROOTS
+	elsewhere := filepath.Join(env.root, "elsewhere", "Secret Course")
+	progressFile := env.app.Config.ProgressFileFor(elsewhere)
+	if err := os.MkdirAll(filepath.Dir(progressFile), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(progressFile, []byte("{}"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Setenv(EnvRoots, env.courseDir)
+	response := env.request(http.MethodPost, "/api/forget_course", map[string]string{"path": elsewhere})
+	if response.Code != http.StatusOK {
+		t.Fatalf("forget status = %d", response.Code)
+	}
+	if _, err := os.Stat(progressFile); err != nil {
+		t.Errorf("progress outside OFFLINEU_ROOTS was touched: %v", err)
+	}
+}
+
 func TestWrongMethodsAreRejected(t *testing.T) {
 	env := newTestEnv(t)
 	if response := env.request(http.MethodPost, "/api/state", nil); response.Code != http.StatusMethodNotAllowed {

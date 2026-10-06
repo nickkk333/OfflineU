@@ -2,6 +2,7 @@ package offlineu
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -150,6 +151,22 @@ func storageError(target string, err error) error {
 	return &ProgressStorageError{Message: fmt.Sprintf(
 		"cannot write progress to %s: %v. "+
 			"Use OFFLINEU_PROGRESS_DIR to store progress somewhere writable.", target, err)}
+}
+
+// Delete removes the stored progress file of a course, so forgetting a course
+// in the picker really clears its data instead of only hiding the entry. The
+// lock orders the removal against a concurrent Save, and a file that does not
+// exist is not an error (there is simply nothing to delete).
+func (t *ProgressTracker) Delete(target string) error {
+	if strings.TrimSpace(target) == "" {
+		return nil
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if err := os.Remove(target); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	return nil
 }
 
 // Update partially updates one lesson entry.
