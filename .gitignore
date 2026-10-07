@@ -39,3 +39,11 @@ data/
 .DS_Store
 Thumbs.db
 *.log
+
+# ---- E2E harness (e2e/) ----
+# The suites, lib.mjs, package.json and fakerenderer/ are source; everything the
+# runs produce (binaries, downloaded browsers, progress files, *.log above) is not.
+/e2e/fakerenderer.exe
+/e2e/offlineu-*-amd64
+/e2e/node_modules/
+/e2e/exe-data/

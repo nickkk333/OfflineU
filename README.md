@@ -449,6 +449,37 @@ go vet ./...        # static checks
 go run . --check-web # is the frontend bundle embedded?
 ```
 
+### End-to-end scenarios (`e2e/`)
+
+`e2e/` drives a **running** server the way a browser or a TV does, which is how a deployment form
+(native binary, container, Linux host) gets verified instead of a single code path:
+
+| File | What it covers |
+| --- | --- |
+| `e2e/api.mjs` | the JSON API: course loading, progress, the three play modes, `/health`, the DLNA endpoints |
+| `e2e/browser.mjs` | a real Edge: the player toolbar, the segmented control, mode persistence across a deep link and a reload, 连播 advancing, 循环 replaying |
+| `e2e/cast.mjs` | casting: SSDP discovery, the SOAP requests, the cast bar, switching the mode mid-cast, the watchdog |
+
+```bash
+cd e2e
+npm install                                # playwright-core, nothing else
+node api.mjs     http://127.0.0.1:5100     # optional 3rd argument: course path for the first load
+node browser.mjs http://127.0.0.1:5100     # Edge has to be installed (channel: 'msedge')
+node cast.mjs    http://127.0.0.1:5100     # starts e2e/fakerenderer.exe itself
+```
+
+They expect a course named `E2E Course` below the server root with 6 second clips
+(`Section 1/01 - Alpha.mp4`, `Section 1/02 - Notes.txt`, `Section 1/03 - Beta.mp4`,
+`Section 2/04 - Gamma.mp4`) and set the play mode they need before each scenario, so a run does not
+depend on the state a previous one left behind.
+
+`cast.mjs` runs a fake DLNA renderer (`cd e2e/fakerenderer && go build`) that answers real SSDP and
+SOAP traffic, so the server has to be able to reach it over multicast. That works natively and in a
+container with `--network host`, but **not** through Docker Desktop's bridge/NAT: validate casting
+on a real Linux host (fnOS, a NAS) or with the WSL deployment, where the Windows side renders are
+discovered over the WSL network interface. The API and browser suites are form independent and were
+verified against the Windows exe, Docker Desktop (bridge) and WSL2.
+
 ---
 
 ## 🏷️ Tagging & releases

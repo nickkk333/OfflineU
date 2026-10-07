@@ -1,0 +1,14 @@
+{
+  "name": "offlineu-e2e",
+  "private": true,
+  "type": "module",
+  "description": "End-to-end scenarios for 单播循环 / 单播不循环 / 连播 in the browser and while casting.",
+  "scripts": {
+    "api": "node api.mjs",
+    "browser": "node browser.mjs",
+    "cast": "node cast.mjs"
+  },
+  "dependencies": {
+    "playwright-core": "^1.49.0"
+  }
+}
