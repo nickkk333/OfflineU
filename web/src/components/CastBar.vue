@@ -9,7 +9,7 @@ import { api, formatTime, lessonRoute, navigateFull } from '../api.js'
 import { t } from '../i18n.js'
 import { useToast } from '../composables/useToast.js'
 import { loadCourse, store } from '../store.js'
-import { PLAY_MODES, playMode, setPlayMode as savePlayMode, applyPlayMode } from '../composables/usePlayMode.js'
+import { PLAY_MODES, castPlayMode, setCastPlayMode, applyCastPlayMode } from '../composables/usePlayMode.js'
 
 const props = defineProps({
   session: { type: Object, required: true },
@@ -45,16 +45,16 @@ async function openLesson() {
   router.push(target)
 }
 
-// The same three choices the lesson page offers, and the very same setting:
-// usePlayMode stores it on the server, so the mode picked here is still the one
-// the player toolbar shows - even in another browser (see usePlayMode.js).
+// The cast's own play mode: its very own setting on the server, separate from the
+// browser player's. usePlayMode stores it there, so the choice picked here is
+// still the one the TV uses - even in another browser (see usePlayMode.js).
 const switching = ref(false)
 
 async function setPlayMode(mode) {
-  if (mode === playMode.value || switching.value) return
+  if (mode === castPlayMode.value || switching.value) return
   switching.value = true
   try {
-    await savePlayMode(mode, props.session.udn)
+    await setCastPlayMode(mode, props.session.udn)
     emit('refresh')
   } finally {
     switching.value = false
@@ -63,10 +63,11 @@ async function setPlayMode(mode) {
 
 // While a cast runs the server applies the mode to the device, so its value is
 // the one to show (a cast may have been started from another page or browser).
+// This is the cast's mode - not the browser player's.
 watch(
   () => props.session.play_mode,
   (mode) => {
-    if (mode === 'loop' || mode === 'once' || mode === 'next') applyPlayMode(mode)
+    if (mode === 'loop' || mode === 'once' || mode === 'next') applyCastPlayMode(mode)
   },
   { immediate: true }
 )
@@ -200,9 +201,9 @@ async function stop() {
           :key="mode.id"
           type="button"
           class="seg__btn"
-          :class="{ 'seg__btn--active': playMode === mode.id }"
+          :class="{ 'seg__btn--active': castPlayMode === mode.id }"
           role="radio"
-          :aria-checked="playMode === mode.id"
+          :aria-checked="castPlayMode === mode.id"
           :title="t(mode.title)"
           :disabled="switching"
           @click="setPlayMode(mode.id)"
