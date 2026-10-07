@@ -1,8 +1,0 @@
-fix: 投屏条的模式控件使用投屏独立的 cast_play_mode
-
-此前 CastBar 的“单播循环/单播不循环/连播”分段控件错误地绑定到浏览器本地的
-play_mode / setPlayMode，且把设备当前的 play_mode 同步回本地设置——这会导致投屏与
-本地模式互相串改，破坏了两者各自独立保存的设定。
-
-改为使用投屏专属的 castPlayMode / setCastPlayMode / applyCastPlayMode（服务端
-cast_play_mode），与浏览器播放器设置完全隔离；LessonView 的工具条仍用本地 play_mode。
