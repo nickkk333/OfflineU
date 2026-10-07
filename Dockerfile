@@ -23,9 +23,10 @@ FROM golang:1.24-alpine AS build
 
 WORKDIR /src
 
-# Version is injected at build time: CI passes the git tag, fnos/build.ps1 passes
-# the manifest version, and a bare "docker build" falls back to a dev marker.
-ARG VERSION=0.0.0-dev
+# Version is injected at build time: a git tag becomes X.Y.Z, every other build
+# (CI branch/PR run, fnos/build.ps1, build-windows.ps1, docker/run.ps1) uses
+# latest - the same rule everywhere, so the version is never typed by hand.
+ARG VERSION=latest
 
 COPY go.mod ./
 COPY main.go ./

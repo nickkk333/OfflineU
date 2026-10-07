@@ -12,8 +12,9 @@ const props = defineProps({
   enabled: { type: Boolean, default: true },
   // What the server decided for this file: { needs_transcode, transcode_available }
   plan: { type: Object, default: () => ({}) },
-  // Continuous playback: the server then pushes the next lesson on its own.
-  autoplay: { type: Boolean, default: true }
+  // What happens when the lesson ends: "once" (stop, default), "loop" or
+  // "next" - the server's watchdog then applies it to the device.
+  playMode: { type: String, default: 'once' }
 })
 
 const emit = defineEmits(['casted'])
@@ -117,7 +118,7 @@ async function cast(device) {
       props.lesson.rel_path,
       resumeAt.value,
       compat.value,
-      props.autoplay,
+      props.playMode,
       duration
     )
     activeUDN.value = device.udn

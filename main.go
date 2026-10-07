@@ -152,10 +152,18 @@ func run(argv []string) int {
 	}
 
 	coursePath := ""
-	if args := flags.Args(); len(args) > 0 {
-		coursePath = args[0]
-	} else {
+	switch {
+	case len(flags.Args()) > 0:
+		coursePath = flags.Args()[0]
+	case strings.TrimSpace(os.Getenv(offlineu.EnvAutoCourse)) != "":
 		coursePath = strings.TrimSpace(os.Getenv(offlineu.EnvAutoCourse))
+	default:
+		// Portable exe (Portable set by -ldflags): no path given means "the
+		// folder I was started from", so double-clicking offlineu.exe inside a
+		// course directory opens that directory as the course.
+		if dir, ok := offlineu.PortableDir(); ok {
+			coursePath = dir
+		}
 	}
 	return finishStartup(app, cfg, webFS, coursePath, bundleErr)
 }

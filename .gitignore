@@ -16,6 +16,12 @@ web/dist/*
 courses/
 data/
 
+# ---- Windows exe produced by build-windows.ps1 ----
+/dist/
+/offlineu-*.exe
+# static ffmpeg downloaded for the bundled build (build tag bundleffmpeg)
+/internal/offlineu/ffmpegwin/
+
 # ---- Exported docker images (docker save) ----
 /image-dist/
 *.tar

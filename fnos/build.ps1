@@ -1,4 +1,4 @@
-# Build the OfflineU fnOS package (.fpk) locally with the official fnpack tool.
+﻿# Build the OfflineU fnOS package (.fpk) locally with the official fnpack tool.
 #
 # amd64 / x86 only. Do NOT hand-roll a tar.gz - fnOS rejects that structure with
 # "应用包不符合系统要求"; the package must be produced by fnpack.
@@ -13,6 +13,20 @@
 #     Windows via --platform linux/amd64). Needs internet to pull base images at
 #     BUILD time only - the resulting fpk is offline for the NAS.
 #   - The first run also fetches fnpack from fnnas.com; cached as fnpack.exe.
+#
+# Version - same rule as build-windows.ps1 and docker/run.ps1, never typed by hand:
+#   HEAD tagged v1.2.3 -> version 1.2.3 (manifest + fpk name + image VERSION arg)
+#   anything else      -> version latest (development build)
+# The image inside the package is additionally tagged offlineu:<version>, so the
+# tar also carries the same tag docker/run.ps1 produces; cmd/main keeps loading
+# offlineu:local, which is what the bundled docker-compose.yaml and the fnOS
+# lifecycle scripts expect.
+#
+param(
+    # 复用本地已有的 offlineu:local 镜像，跳过 docker build（导出仍会执行）
+    [switch]$SkipBuild
+)
+
 # "Continue" (not "Stop") so docker's progress output on stderr is not flagged as
 # a terminating NativeCommandError; we check $LASTEXITCODE explicitly instead.
 $ErrorActionPreference = "Continue"
@@ -22,11 +36,25 @@ $repoRoot   = Split-Path -Parent $root          # OfflineU repo root (Dockerfile
 $app        = Join-Path $root "offlineu"
 $imgDir     = Join-Path (Join-Path $app "app") "images"
 $imgTar     = Join-Path $imgDir "offlineu-amd64.tar"
-# Derive the package file name from the manifest version so it always tracks the release.
-$manifestText = Get-Content (Join-Path $app "manifest") -Raw
-if ($manifestText -match '(?m)^version\s*=\s*(\S+)') { $pkgVer = $Matches[1] } else { $pkgVer = "0.0.0" }
-$out        = Join-Path $root "offlineu_${pkgVer}_x86.fpk"
 $fnpack     = Join-Path $root "fnpack.exe"
+
+# 0) 版本：打 tag 才有版本号，开发用 latest
+$raw = cmd /c "git -C `"$repoRoot`" describe --tags --exact-match HEAD 2>nul"
+if ($LASTEXITCODE -eq 0 -and $raw) {
+    $tag     = ([string]($raw | Select-Object -First 1)).Trim()
+    $version = $tag -replace '^v', ''
+    Write-Host "==> 版本 $version（来自 git tag $tag）"
+} else {
+    $version = "latest"
+    Write-Host "==> 版本 latest（HEAD 没有 tag，开发构建）"
+}
+$out = Join-Path $root "offlineu_${version}_x86.fpk"
+
+# 0b) manifest 的 version 跟随同一个版本号（和 CI 打 tag 时做的事一致）。
+$manifestPath = Join-Path $app "manifest"
+$manifestText = [System.IO.File]::ReadAllText($manifestPath)
+$manifestText = [regex]::Replace($manifestText, '(?m)^version\s*=\s*\S+', "version = $version")
+[System.IO.File]::WriteAllText($manifestPath, $manifestText)
 
 # 1) Ensure fnpack (Windows amd64) is available.
 $fnpackCmd = $null
@@ -57,12 +85,19 @@ if (-not $fnpackCmd) {
 # docker streams progress to stderr; run it via cmd /c so PowerShell does not
 # surface that as a NativeCommandError.
 $dockerfile = Join-Path $repoRoot "Dockerfile"
-Write-Host "==> Building docker image offlineu:local (linux/amd64) ..."
-cmd /c "docker build --platform linux/amd64 --build-arg VERSION=$pkgVer -t offlineu:local -f `"$dockerfile`" `"$repoRoot`" 2>&1"
-if ($LASTEXITCODE -ne 0) { throw "docker build failed" }
+if ($SkipBuild) {
+    Write-Host "==> Skipping docker build (reusing the local offlineu:local image)"
+} else {
+    Write-Host "==> Building docker image offlineu:local (linux/amd64), VERSION=$version ..."
+    cmd /c "docker build --platform linux/amd64 --build-arg VERSION=$version -t offlineu:local -f `"$dockerfile`" `"$repoRoot`" 2>&1"
+    if ($LASTEXITCODE -ne 0) { throw "docker build failed" }
+    # 同一个镜像再打上 offlineu:<version>，和 docker/run.ps1 的命名保持一致。
+    cmd /c "docker tag offlineu:local offlineu:$version 2>&1"
+    if ($LASTEXITCODE -ne 0) { throw "docker tag failed" }
+}
 Write-Host "==> Saving image to $imgTar ..."
 New-Item -ItemType Directory -Force -Path $imgDir | Out-Null
-cmd /c "docker save offlineu:local -o `"$imgTar`" 2>&1"
+cmd /c "docker save offlineu:local offlineu:$version -o `"$imgTar`" 2>&1"
 if ($LASTEXITCODE -ne 0) { throw "docker save failed" }
 
 # 3) Normalize text files to LF so the bash scripts run under fnOS (Linux).
@@ -90,4 +125,7 @@ try {
     Pop-Location
 }
 
+Write-Host ""
 Write-Host "Done: $out"
+Write-Host "  内置镜像: offlineu:local (+ offlineu:$version)，安装时由 cmd/main 离线 docker load"
+Write-Host "  安装：飞牛OS 应用中心 → 手动安装 → 上传上面的 fpk"

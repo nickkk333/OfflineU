@@ -55,14 +55,14 @@ jobs:
     - name: Checkout repository
       uses: actions/checkout@v4
 
-    - name: Compute version
+    - name: Compute version (tag -> X.Y.Z, otherwise latest)
       id: ver
       run: |
-        V="${{ github.ref_name }}"; V="${V#v}"
-        case "$V" in
-          [0-9]*.[0-9]*.[0-9]*) ;;
-          *) V="0.0.0-dev" ;;
-        esac
+        if [ "${{ github.ref_type }}" = "tag" ]; then
+          V="${{ github.ref_name }}"; V="${V#v}"
+        else
+          V="latest"
+        fi
         echo "version=$V" >> "$GITHUB_OUTPUT"
 
     - name: Set up QEMU (for arm64 emulation)
@@ -106,7 +106,7 @@ jobs:
 
   # ---- Native binaries: Linux (amd64/arm64) + Windows (amd64) ----
   # The version baked into the binary follows the git tag (vX.Y.Z -> X.Y.Z);
-  # on branch/PR builds it falls back to 0.0.0-dev.
+  # on branch/PR builds it falls back to latest.
   binaries:
     needs: test
     runs-on: ubuntu-latest
@@ -145,13 +145,14 @@ jobs:
         EXT: ${{ matrix.ext }}
         CGO_ENABLED: "0"
         VERSION: ${{ github.ref_name }}
+        REF_TYPE: ${{ github.ref_type }}
       run: |
         set -e
-        V="${VERSION#v}"
-        case "$V" in
-          [0-9]*.[0-9]*.[0-9]*) ;;
-          *) V="0.0.0-dev" ;;
-        esac
+        if [ "$REF_TYPE" = "tag" ]; then
+          V="${VERSION#v}"
+        else
+          V="latest"
+        fi
         OUT="offlineu-${GOOS}-${GOARCH}${EXT}"
         go build -trimpath -ldflags="-s -w -X github.com/nickkk333/offlineu/internal/offlineu.Version=$V" -o "$OUT" .
         ls -l "$OUT"
@@ -166,8 +167,9 @@ jobs:
   # ---- fnOS package (.fpk): amd64 / x86 only, fully offline ----
   # The image is built locally here and exported into the package; cmd/main
   # docker-loads it on start, so the NAS never reaches out to any registry.
-  # On a tag push the manifest version is pinned to the tag so the .fpk name
-  # tracks the release (e.g. v2.0.0 -> offlineu_2.0.0_x86.fpk).
+  # The version follows the same rule as fnos/build.ps1, build-windows.ps1 and
+  # docker/run.ps1: a v* tag becomes the version, every other build is "latest"
+  # (e.g. v2.0.0 -> offlineu_2.0.0_x86.fpk, main -> offlineu_latest_x86.fpk).
   fpk:
     needs: test
     runs-on: ubuntu-latest
@@ -178,19 +180,29 @@ jobs:
     - name: Set up Docker Buildx
       uses: docker/setup-buildx-action@v3
 
+    - name: Compute version (tag -> X.Y.Z, otherwise latest)
+      id: fpkver
+      run: |
+        set -e
+        if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+          V="${GITHUB_REF_NAME#v}"
+        else
+          V="latest"
+        fi
+        echo "version=$V" >> "$GITHUB_OUTPUT"
+
     - name: Build and export the image into the package
       run: |
         set -e
-        V="${GITHUB_REF_NAME#v}"
-        case "$V" in
-          [0-9]*.[0-9]*.[0-9]*) ;;
-          *) V="0.0.0-dev" ;;
-        esac
+        V="${{ steps.fpkver.outputs.version }}"
         docker buildx build --platform linux/amd64 --load \
           --build-arg VERSION="$V" \
           -t offlineu:local -f Dockerfile .
+        # Same two tags fnos/build.ps1 exports: offlineu:local is what cmd/main
+        # loads, offlineu:<version> matches the tag docker/run.ps1 produces.
+        docker tag offlineu:local "offlineu:$V"
         mkdir -p fnos/offlineu/app/images
-        docker save offlineu:local -o fnos/offlineu/app/images/offlineu-amd64.tar
+        docker save offlineu:local "offlineu:$V" -o fnos/offlineu/app/images/offlineu-amd64.tar
         ls -lh fnos/offlineu/app/images/offlineu-amd64.tar
 
     - name: Install fnpack
@@ -209,10 +221,7 @@ jobs:
       working-directory: fnos/offlineu
       run: |
         sed -i 's/^platform[[:space:]]*=.*/platform = x86/' manifest
-        if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
-          V="${GITHUB_REF_NAME#v}"
-          sed -i "s/^version[[:space:]]*=.*/version = ${V}/" manifest
-        fi
+        sed -i "s/^version[[:space:]]*=.*/version = ${{ steps.fpkver.outputs.version }}/" manifest
         grep -E '^(appname|version|platform) ' manifest
 
     - name: Build fpk
@@ -221,7 +230,7 @@ jobs:
         set -e
         fnpack build
         fpk=$(ls ./*.fpk | head -n1)
-        mv "$fpk" "$GITHUB_WORKSPACE/"
+        mv "$fpk" "$GITHUB_WORKSPACE/offlineu_${{ steps.fpkver.outputs.version }}_x86.fpk"
         ls -l "$GITHUB_WORKSPACE"/*.fpk
 
     - name: Upload fpk artifact

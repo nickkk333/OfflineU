@@ -27,6 +27,16 @@ const (
 	EnvDLNA        = "OFFLINEU_DLNA"
 )
 
+// Portable is empty for an ordinary build ("go build", "go run", the Docker
+// image). The Windows packaging script sets it with
+//
+//	-ldflags "-X github.com/nickkk333/offlineu/internal/offlineu.Portable=1"
+//
+// so the shipped .exe treats the folder it lives in as its course folder: drop
+// offlineu.exe into a course directory and double-click it. It has to stay a var
+// (not a const) because the linker can only overwrite variables - see Version.
+var Portable = ""
+
 // MountHint is printed at startup and shown in the picker when none of the
 // configured folders contains anything: in a container this almost always means
 // the course folder was never mapped.
@@ -131,13 +141,48 @@ func ConfigFromEnv() Config {
 	}
 	cfg.RefreshRoots()
 	cfg.StateDir = deriveStateDir(cfg.ProgressDir)
+	if dir, ok := PortableDir(); ok && cfg.ProgressDir == "" {
+		// A portable exe keeps its bookkeeping next to itself, not in whatever
+		// folder a shortcut happened to be started from.
+		cfg.StateDir = filepath.Join(dir, "data")
+	}
 	return cfg
+}
+
+// PortableDir returns the folder the executable lives in - but only for a
+// portable build (Portable set by -ldflags). ok is false for an ordinary build,
+// so "go run ." never picks up the temporary build directory.
+func PortableDir() (string, bool) {
+	if strings.TrimSpace(Portable) == "" {
+		return "", false
+	}
+	exe, err := os.Executable()
+	if err != nil {
+		return "", false
+	}
+	dir, err := filepath.Abs(filepath.Dir(exe))
+	if err != nil {
+		return "", false
+	}
+	info, err := os.Stat(dir)
+	if err != nil || !info.IsDir() {
+		return "", false
+	}
+	return dir, true
 }
 
 // RefreshRoots re-reads the allow-list so tests (and long running processes)
 // always see the current value of OFFLINEU_ROOTS.
 func (c *Config) RefreshRoots() {
 	c.Roots = ParseRoots(os.Getenv(EnvRoots))
+	if len(c.Roots) == 0 {
+		// Portable exe: the folder it lives in is the only folder it serves, so
+		// a copy dropped into a course directory cannot wander off into the rest
+		// of the disk.
+		if dir, ok := PortableDir(); ok {
+			c.Roots = ParseRoots(dir)
+		}
+	}
 }
 
 // ParseRoots splits an os.PathListSeparator separated list into absolute,

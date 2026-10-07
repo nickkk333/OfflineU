@@ -14,8 +14,17 @@ const (
 	MaxRecentCourses    = 20
 	ProgressFilename    = ".offlineu_progress.json"
 	StateFilename       = "offlineu_state.json"
-	Version             = "2.0.1"
 )
+
+// Version is reported by --help and /api/state. It has to stay a var (not a
+// const): release builds overwrite the value with
+// -ldflags "-X github.com/nickkk333/offlineu/internal/offlineu.Version=x.y.z"
+// and the Go linker can only modify variables - a const silently keeps its
+// source value.
+//
+// The source value is what a bare "go build" (no -ldflags) reports, i.e. a
+// development build: latest, the same marker every other dev build uses.
+var Version = "latest"
 
 var videoExtensions = []string{".mp4", ".mkv", ".avi", ".mov", ".webm", ".m4v", ".flv", ".wmv"}
 var audioExtensions = []string{".mp3", ".wav", ".m4a", ".aac", ".ogg", ".flac"}

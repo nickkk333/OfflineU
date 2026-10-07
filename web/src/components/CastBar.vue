@@ -3,10 +3,11 @@
 // (the server asks the device where it is), shows how far the lesson got and
 // lets the lesson be paused, skipped or stopped from the browser. When the
 // device reaches the end, the server pushes the next lesson by itself.
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { api, formatTime, lessonRoute } from '../api.js'
 import { t } from '../i18n.js'
 import { useToast } from '../composables/useToast.js'
+import { PLAY_MODES, playMode, setPlayMode as savePlayMode, applyPlayMode } from '../composables/usePlayMode.js'
 
 const props = defineProps({
   session: { type: Object, required: true },
@@ -17,6 +18,32 @@ const props = defineProps({
 
 const emit = defineEmits(['refresh', 'ended'])
 const toast = useToast()
+
+// The same three choices the lesson page offers, and the very same setting:
+// usePlayMode stores it on the server, so the mode picked here is still the one
+// the player toolbar shows - even in another browser (see usePlayMode.js).
+const switching = ref(false)
+
+async function setPlayMode(mode) {
+  if (mode === playMode.value || switching.value) return
+  switching.value = true
+  try {
+    await savePlayMode(mode, props.session.udn)
+    emit('refresh')
+  } finally {
+    switching.value = false
+  }
+}
+
+// While a cast runs the server applies the mode to the device, so its value is
+// the one to show (a cast may have been started from another page or browser).
+watch(
+  () => props.session.play_mode,
+  (mode) => {
+    if (mode === 'loop' || mode === 'once' || mode === 'next') applyPlayMode(mode)
+  },
+  { immediate: true }
+)
 
 const position = computed(() => Number(props.session.position || 0))
 const duration = computed(() => Number(props.session.duration || 0))
@@ -140,8 +167,24 @@ async function stop() {
       </RouterLink>
       <button type="button" class="btn btn--sm" @click="stop">{{ t('cast.stop') }}</button>
       <span class="spacer"></span>
-      <span v-if="hasNext" class="faint">{{ t('cast.nextUp', { title: session.next_title }) }}</span>
-      <span v-else class="faint">{{ t('cast.lastLesson') }}</span>
+      <div class="seg" role="radiogroup" :aria-label="t('lesson.whenFinished')">
+        <button
+          v-for="mode in PLAY_MODES"
+          :key="mode.id"
+          type="button"
+          class="seg__btn"
+          :class="{ 'seg__btn--active': playMode === mode.id }"
+          role="radio"
+          :aria-checked="playMode === mode.id"
+          :title="t(mode.title)"
+          :disabled="switching"
+          @click="setPlayMode(mode.id)"
+        >
+          {{ t(mode.label) }}
+        </button>
+      </div>
+      <span v-if="playMode === 'next' && hasNext" class="faint">{{ t('cast.nextUp', { title: session.next_title }) }}</span>
+      <span v-else-if="playMode === 'next'" class="faint">{{ t('cast.lastLesson') }}</span>
     </div>
   </div>
 </template>
@@ -245,5 +288,45 @@ async function stop() {
   gap: 8px;
   flex-wrap: wrap;
   font-size: 0.82rem;
+}
+
+/* Segmented control for the live play mode (loop / once / next) ----------- */
+.seg {
+  display: inline-flex;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overflow: hidden;
+  background: var(--surface-strong);
+}
+
+.seg__btn {
+  padding: 6px 12px;
+  background: none;
+  border: none;
+  border-right: 1px solid var(--border);
+  color: var(--text-muted);
+  font-size: 0.85rem;
+  cursor: pointer;
+  transition: all var(--transition);
+}
+
+.seg__btn:last-child {
+  border-right: none;
+}
+
+.seg__btn:hover:not(:disabled) {
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.seg__btn:disabled {
+  cursor: progress;
+  opacity: 0.6;
+}
+
+.seg__btn--active {
+  background: var(--accent-soft);
+  color: var(--text);
+  font-weight: 600;
 }
 </style>

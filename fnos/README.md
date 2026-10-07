@@ -44,17 +44,30 @@ fnos/
 
 ### 本地打包（推荐，完全离线）
 
-`fnos/build.ps1`：① `docker build --platform linux/amd64 -t offlineu:local`（含前端 +
-内置 ffmpeg）→ ② `docker save` 到 `app/images/offlineu-amd64.tar` → ③ 包内文本统一 LF
-→ ④ 官方 `fnpack` 打包成 `offlineu_1.0.0_x86.fpk`。
+`fnos/build.ps1`：① 版本号自动推导 → ② `docker build --platform linux/amd64
+-t offlineu:local`（含前端 + 内置 ffmpeg）→ ③ `docker save` 到 `app/images/offlineu-amd64.tar`
+→ ④ 包内文本统一 LF → ⑤ 官方 `fnpack` 打包成 `offlineu_<版本>_x86.fpk`。
 
 ```powershell
 cd fnos
-.\build.ps1            # 产物 fnos\offlineu_1.0.0_x86.fpk
+.\build.ps1            # 产物 fnos\offlineu_2.0.3_x86.fpk
+.\build.ps1 -SkipBuild # 复用本地已有的 offlineu:local 镜像，只重新导出 + 打包
 ```
 
+**版本号与 `build-windows.ps1`、`docker\run.ps1` 完全一致，不需要手动指定**：
+
+| HEAD | fpk 文件名 | `manifest` 的 version | 镜像 `VERSION` / 附加 tag |
+| --- | --- | --- | --- |
+| 打着 tag `v1.2.3` | `offlineu_1.2.3_x86.fpk` | `1.2.3` | `1.2.3` / `offlineu:1.2.3` |
+| 其它（开发构建） | `offlineu_latest_x86.fpk` | `latest` | `latest` / `offlineu:latest` |
+
+镜像本身仍以 `offlineu:local` 为主 tag（`cmd/main` 与包内 `docker-compose.yaml` 都按这个
+名字 `docker load` 后启动），附加的 `offlineu:<版本>` 只是让包内 tar 同时带上与
+`docker\run.ps1` 相同的名字，方便在本机对照。
+
 要求：Windows 已启动 Docker Desktop（Linux 容器模式）；首次运行需联网下载 fnpack 与拉取
-基础镜像（仅**构建**阶段联网，产物对 NAS 完全离线）。
+基础镜像（仅**构建**阶段联网，产物对 NAS 完全离线）。ffmpeg 已由 Dockerfile 用 `apk` 装进
+镜像，因此 NAS 上播放 MKV / MPEG-TS 的 remux 同样是开箱即用、无需联网。
 
 ### CI 打包（GitHub Actions）
 

@@ -93,6 +93,81 @@ CGO_ENABLED=0 GOOS=linux   GOARCH=arm64 go build -o offlineu-linux-arm64 .
 CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -o offlineu.exe .
 ```
 
+### Windows 上编译打包 exe
+
+在 Windows 上可以直接得到可双击运行的单文件 `offlineu.exe`，不需要 Docker / WSL：
+
+1. **安装 Go（1.23+）** — <https://go.dev/dl/>，安装后在 PowerShell 执行 `go version`
+   确认生效（新版安装器已自动加 PATH；重开一个终端窗口即可）。
+2. **（可选）安装 Node.js 22+** — <https://nodejs.org/>。仓库自带 `web/dist`，
+   不装 Node 也能编译出完整程序；只有想把**最新前端源码**打进 exe 时才需要它。
+3. **获取源码并进入目录**：
+
+   ```powershell
+   git clone https://github.com/nickkk333/OfflineU.git
+   cd OfflineU
+   ```
+
+4. **（可选）构建前端**，把最新界面嵌进 exe：
+
+   ```powershell
+   npm --prefix web install
+   npm --prefix web run build
+   ```
+
+5. **编译 exe** — `CGO_ENABLED=0` 产出不依赖任何运行库的静态单文件，`-ldflags`
+   把版本号注入二进制（显示在 `--help` 和 `/api/state` 里）：
+
+   ```powershell
+   $env:CGO_ENABLED = "0"
+   go build -trimpath -ldflags="-s -w -X github.com/nickkk333/offlineu/internal/offlineu.Version=latest" -o offlineu.exe .
+   ```
+
+   > 版本号 `2.0.3` 换成你想要的。cmd 里写法是 `set CGO_ENABLED=0`，其余相同。
+
+   或者直接用仓库里的脚本：它按上面的顺序做完（前端 → exe），版本号也自动跟随
+   git tag（没有 tag 就是 `latest`），产物在 `dist\offlineu-<version>.exe`：
+
+   ```powershell
+   .\build-windows.ps1          # -SkipFrontend 跳过前端编译，-Run 编译完直接启动
+   ```
+
+   脚本默认把静态 **ffmpeg / ffprobe 也内嵌进 exe**（`go build -tags bundleffmpeg`）：
+   首次构建会下载约 158 MB 并缓存到 `internal\offlineu\ffmpegwin\`，产物因此约 166 MB，
+   换来的好处是首次播放 MKV / MPEG-TS 时不再联网下载 ffmpeg。不想要就加 `-SkipFFmpeg`
+   （回到 ~8 MB），或加 `-NoFFprobe` 只内嵌 ffmpeg（~87 MB，探测改用 `ffmpeg -i`）。
+   内嵌的是 [eugeneware/ffmpeg-static](https://github.com/eugeneware/ffmpeg-static)
+   的 GPL 构建，随 exe 一起分发需遵守 GPL。
+
+6. **验证并运行**：
+
+   ```powershell
+   .\offlineu.exe --check-web    # 确认前端已嵌入，然后退出
+   .\offlineu.exe                # 启动，浏览器打开 http://127.0.0.1:5000
+   ```
+
+   带课程目录启动：`.\offlineu.exe "D:\Courses\"`；局域网访问加 `--host 0.0.0.0`
+   （首次运行会弹出 Windows 防火墙提示，允许专用网络即可）。双击 exe 不带参数也行，
+   会恢复上次打开的课程或显示文件夹选择器。
+
+   `build-windows.ps1` 编出来的是**便携版**：课程文件夹就是 exe 所在的文件夹（浏览
+   范围也限制在那里），进度和课程列表写在同级的 `data\` 里 —— 把 exe 拷进任意课程
+   目录双击，打开的就是那个目录。命令行参数 `.\offlineu.exe "D:\Courses\Python"` 或
+   `AUTO_LOAD_COURSE` 仍然优先于这个默认目录。
+
+7. **（可选）打包分发** — exe 就是完整程序，压成 zip 发给别人，解压到任意目录双击
+   即可运行，课程文件夹通过启动参数或界面里的选择器指向，无需一起复制：
+
+   ```powershell
+   Compress-Archive -Path offlineu.exe -DestinationPath offlineu-windows-amd64.zip
+   ```
+
+   > 个别杀毒软件 / SmartScreen 可能对新编译的未知 exe 误报（无签名的 Go 单文件
+   > 常见现象），选择"仍要运行"即可；从本仓库 Release 页面下载的产物不受影响。
+
+> 已装 Go 的其他平台也能交叉编译出 Windows 版（`goos=windows` 时产物自动带
+> `.exe` 后缀）：`$env:GOOS = "windows"; $env:GOARCH = "amd64"; go build -o offlineu.exe .`
+
 ### 3. Run it
 
 ```bash
@@ -177,10 +252,11 @@ stays scriptable:
 | POST   | `/api/forget_course`                    | `{"path": "..."}` — drop the course from the recent list and delete its stored progress       |
 | GET    | `/reset_course`, `/forget_course`       | Legacy redirect variants of the two endpoints above             |
 | GET    | `/api/dlna/devices`                     | Renderers found on the LAN (`?refresh=1` repeats the SSDP search) |
-| POST   | `/api/dlna/cast`                        | `{"device": "<udn>", "lesson_path": "...", "start_seconds": 30, "transcode": "auto"\|"on"\|"off"}` — push a lesson to a renderer; `converted` in the answer says whether a stream was used |
+| POST   | `/api/dlna/cast`                        | `{"device": "<udn>", "lesson_path": "...", "start_seconds": 30, "transcode": "auto"\|"on"\|"off", "play_mode": "once"\|"loop"\|"next"}` — push a lesson to a renderer; `play_mode` decides what happens when it ends (default `once`); `converted` in the answer says whether a stream was used |
 | GET    | `/api/dlna/stream?lesson=<path>&start=30` | The converted stream (MPEG-TS / AAC) a renderer pulls while playing |
 | GET    | `/api/dlna/session`                     | The running cast: device, lesson, position/duration, state, next lesson |
 | POST   | `/api/dlna/control`                     | `{"device": "<udn>", "action": "play"\|"pause"\|"stop"\|"next"\|"seek", "position": 90}` |
+| POST   | `/api/settings`                         | `{"play_mode": "once"\|"loop"\|"next", "device": "<udn>"?}` — the global play-mode setting: stored on the server (so it survives a new browser / cleared cache / restart), applied to a cast that is already running (and wakes one up that stopped in `once`) |
 
 `/api/state` and `/api/lesson` carry `dlna_enabled`, so the UI hides the cast button when
 `OFFLINEU_DLNA=off`. `OFFLINEU_DLNA=off` makes the three DLNA endpoints answer `403`.
@@ -277,11 +353,24 @@ plays next), while the buttons pause, skip and stop the device from the browser.
   device (`Seek` with `REL_TIME`); a converted stream has no timeline to jump in, so ffmpeg is
   restarted at that position (`-ss`) and the device gets the new URL. Jumping past the end stops a
   second before it, so the lesson can still finish and continue.
-* When the lesson ends, OfflineU **pushes the next playable lesson to the same device** by itself
-  (documents are skipped) and the browser follows to the new lesson. This is done by a watchdog in
-  the server, not by the page, so it also works with the browser closed. Turn it off by passing
-  `autoplay: false` to `/api/dlna/cast` — or by switching off *Autoplay next lesson* in the player
-  toolbar before casting.
+* When the lesson ends, what happens follows the **play mode** chosen in the player toolbar (the
+  same choice applies to browser playback and to casts): *Once* (default) stops, *Loop* starts the
+  same lesson again, and *Next* **pushes the next playable lesson to the same device** by itself
+  (documents are skipped) while the browser follows to the new lesson. The loop/next behaviour is
+  driven by a watchdog in the server, not by the page, so it also works with the browser closed.
+  Pick the mode with `"play_mode"` on `/api/dlna/cast` (`"once" | "loop" | "next"`; the legacy
+  `autoplay` boolean still maps onto it: `true` = `next`, `false` = `once`).
+* The mode is **not frozen when the cast starts**: the segmented control of the player toolbar and
+  the one on the cast bar send `POST /api/settings`, so switching 单播循环 / 单播不循环 / 连播 takes
+  effect while the TV is playing. A cast that already stopped because it was on *Once* is woken up
+  again by switching to *Loop* or *Next* (the watchdog then hands the device the repeat or the next
+  lesson), so a mode change never needs the cast to be restarted.
+* The choice is **stored on the server** (in the bookkeeping file next to the progress data) and
+  handed to every client through `/api/state` → `play_mode`, so it is a global setting: a new
+  browser, another machine or a cleared cache shows the mode that was picked last. localStorage is
+  only the first-paint cache. The cast itself lives in the server too, so closing the browser (or
+  using a different one) does not interrupt playback - the new window simply picks the running cast
+  up from `GET /api/dlna/session` and shows the bar with the same mode.
 * The cast bar is not tied to the lesson page: the **dashboard shows it too** (with a link to the
   lesson that is playing), so you can watch the progress, pause or skip while browsing the course
   tree. The lesson page follows the device as soon as it moves on - the comparison is made against
@@ -404,12 +493,14 @@ time, so every artifact of a release shares the same number:
   and the API (`/api/state` → `version`).
 * **Docker image** — pushed to GitHub Container Registry as `ghcr.io/nickkk333/offlineu:2.0.0`,
   plus the rolling tags `:2.0`, `:2` and `:main` (`:main` is only on branch builds).
-* **fnOS package** — `offlineu_2.0.0_x86.fpk`; CI pins the `manifest` version to the tag (a
-  branch build keeps `0.0.0-dev`).
+* **fnOS package** — `offlineu_2.0.0_x86.fpk`; the `manifest` version is set to the same
+  number.
 * **`checksums.txt`** — SHA-256 of every attached asset, for verifying downloads.
 
-> Branch / PR builds that are not a tag fall back to `0.0.0-dev` everywhere, so local or CI
-> test builds never collide with a real release number.
+> Anything that is not a tagged commit (branch / PR / local build) uses **`latest`** everywhere
+> — binary `Version`, image tag, `manifest` version and the `.fpk` file name — so a development
+> build never collides with a real release number and the version never has to be typed by hand
+> (`docker/run.ps1`, `build-windows.ps1` and `fnos/build.ps1` derive it from git).
 
 ### 飞牛OS / fnOS
 
@@ -514,6 +605,35 @@ docker compose up -d          # or: docker build -t offlineu . && docker run ...
 Casting needs the SSDP multicast of your LAN, which Docker's default bridge network does not
 forward: add `network_mode: host` to the service (and drop the `ports` mapping, the container then
 uses the host network directly) if you want the 📺 Cast button to find your TV.
+
+### Local dev loop — build & run with host networking (Windows / PowerShell)
+
+```powershell
+.\docker\run.ps1
+```
+
+One command does both: it builds the image from this folder and starts the container
+`offlineu-dev` with `--network host` (re-running it replaces the old container). The version is
+derived from git, so it is never typed by hand:
+
+| HEAD | image | `VERSION` build-arg (binary / `/api/state`) |
+| --- | --- | --- |
+| tagged `v1.2.3` | `offlineu:1.2.3` | `1.2.3` |
+| anything else (development) | `offlineu:latest` | `latest` |
+
+| Flag | Meaning |
+| --- | --- |
+| `-Port 8080` | listening port (default `5000`) |
+| `-Courses <dir>` / `-Data <dir>` | override the default `./courses` and `./data` mounts |
+| `-Foreground` | run in the foreground, Ctrl-C stops it |
+| `-Bridge` | use `-p <port>:<port>` instead of host networking |
+| `-NoBuild` | reuse the existing image, skip `docker build` |
+| `-Logs` | follow `docker logs -f` after starting |
+
+`-Bridge` is the fallback for Windows/macOS Docker Desktop, where `--network host` means the
+Linux VM behind Docker Desktop rather than your desktop (so `http://localhost:5000` on the
+desktop cannot reach it); running the script from WSL keeps real host networking. Multi-arch
+release images are still built only by `.github/workflows/docker-build.yml`.
 
 ### Offline install — export a `docker load`-able tar
 

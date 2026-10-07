@@ -104,8 +104,9 @@ const en = {
       loadText: 'and start learning — progress is saved automatically.',
       comeBackLabel: 'Come back anytime',
       comeBackText: ': courses are remembered and the last one reopens after a restart.',
-      autoplayLabel: 'Continuous playback',
-      autoplayText: ': a finished video rolls into the next one and your speed carries over.'
+      autoplayLabel: 'Playback modes',
+      autoplayText:
+        ': choose what a finished lesson does — stop, loop the current one or roll into the next; your speed carries over.'
     },
     typesTitle: '🗂️ Supported file types',
     types: {
@@ -170,7 +171,14 @@ const en = {
     resumeAt: 'Resume at',
     progressWarning: 'Progress could not be saved.',
     speed: 'Speed',
-    autoplayNext: 'Autoplay next lesson',
+    whenFinished: 'When finished:',
+    modeLoop: 'Loop',
+    modeOnce: 'Once',
+    modeNext: 'Next',
+    modeLoopHint: 'Loop this lesson when it ends',
+    modeOnceHint: 'Stop when the lesson ends',
+    modeNextHint: 'Continue with the next lesson',
+    loopHint: 'This lesson repeats until you switch the mode',
     upNext: 'Up next:',
     lastLesson: 'This is the last lesson of the course',
     subtitles: 'Subtitles',
@@ -201,6 +209,8 @@ const en = {
     seekHint: 'Click the bar to jump to that position',
     openLesson: '📖 Open this lesson',
     nextUp: 'Next: {title}',
+    onceHint: 'Stops when the lesson ends',
+    loopHint: 'Repeats this lesson until you stop the cast',
     compatMode: 'Compatibility mode',
     compatHint:
       'Repackages the file while it plays (MPEG-TS) — needed for .mkv, .avi and friends. Exotic codecs are re-encoded; switch it off to hand over the untouched file.',
@@ -317,8 +327,8 @@ const zh = {
       loadText: '然后开始学习 —— 进度会自动保存。',
       comeBackLabel: '随时回来',
       comeBackText: '：课程会被记住，重启后自动打开上次的课程。',
-      autoplayLabel: '连续播放',
-      autoplayText: '：一节视频播完会自动接着下一节，倍速设置也会保留。'
+      autoplayLabel: '播放模式',
+      autoplayText: '：播完后可以停止、循环本节或自动连播下一节，倍速设置也会保留。'
     },
     typesTitle: '🗂️ 支持的文件类型',
     types: {
@@ -383,7 +393,14 @@ const zh = {
     resumeAt: '上次看到',
     progressWarning: '进度未能保存。',
     speed: '播放速度',
-    autoplayNext: '自动播放下一节',
+    whenFinished: '播放结束时：',
+    modeLoop: '单播循环',
+    modeOnce: '单播不循环',
+    modeNext: '连播',
+    modeLoopHint: '播放结束后从头循环本节',
+    modeOnceHint: '播放结束后停止',
+    modeNextHint: '播放结束后自动播放下一节',
+    loopHint: '本节将循环播放，直到切换模式',
     upNext: '接下来：',
     lastLesson: '这已经是课程的最后一节',
     subtitles: '字幕',
@@ -413,6 +430,8 @@ const zh = {
     seekHint: '点击进度条可跳转到该位置',
     openLesson: '📖 打开这一节',
     nextUp: '下一节：{title}',
+    onceHint: '结束后停止',
+    loopHint: '结束后循环本节',
     compatMode: '兼容模式',
     compatHint:
       '播放时实时重新封装为 MPEG-TS —— .mkv、.avi 等格式需要它；编码不被支持时会自动转码。取消勾选则直接推送原始文件。',

@@ -1,5 +1,5 @@
 <script setup>
-import { onMounted } from 'vue'
+import { computed, onMounted } from 'vue'
 import { refreshState, store } from '../store.js'
 import { t } from '../i18n.js'
 import CoursePicker from './CoursePicker.vue'
@@ -9,6 +9,14 @@ import CastBar from '../components/CastBar.vue'
 import { useCast } from '../composables/useCast.js'
 
 const { cast, refreshCast } = useCast()
+
+// A release reports a number (2.0.3) and gets the usual "v" prefix; a
+// development build reports "latest", which would read as "vlatest".
+const versionLabel = computed(() => {
+  const version = String(store.version || '').trim()
+  if (!version) return ''
+  return /^\d/.test(version) ? `v${version}` : version
+})
 
 onMounted(() => {
   if (!store.loaded) refreshState()
@@ -24,7 +32,7 @@ onMounted(() => {
         <p class="faint">{{ t('app.tagline') }}</p>
       </div>
       <span class="spacer"></span>
-      <span v-if="store.version" class="badge">v{{ store.version }}</span>
+      <span v-if="versionLabel" class="badge">{{ versionLabel }}</span>
       <LanguageSwitch />
     </header>
 

@@ -53,7 +53,9 @@ export const api = {
   // fly (ffmpeg), which is what a TV needs for .mkv and friends.
   // duration is what the browser measured while reading the file; the server
   // needs a length to know when the cast ended (and to continue).
-  castTo: (device, lessonPath, startSeconds, converted, autoplay, duration) =>
+  // playMode is what the device does when the lesson ends: "once" (stop,
+  // default), "loop" (repeat this lesson) or "next" (continue with the next).
+  castTo: (device, lessonPath, startSeconds, converted, playMode, duration) =>
     request('/api/dlna/cast', {
       method: 'POST',
       body: JSON.stringify({
@@ -61,9 +63,17 @@ export const api = {
         lesson_path: lessonPath,
         start_seconds: Math.floor(startSeconds || 0),
         transcode: converted ? 'on' : 'off',
-        autoplay: autoplay !== false,
+        play_mode: playMode || 'once',
         duration: Math.floor(duration || 0)
       })
+    }),
+  // The global "when the lesson ends" setting (once / loop / next). The server
+  // stores it, so it survives a new browser and a cleared cache; a cast that is
+  // already running picks it up at the same time.
+  setPlayMode: (playMode, device) =>
+    request('/api/settings', {
+      method: 'POST',
+      body: JSON.stringify({ play_mode: playMode, ...(device ? { device } : {}) })
     }),
   castControl: (device, action, position) =>
     request('/api/dlna/control', {

@@ -633,6 +633,14 @@ func (t *Transcoder) ensureFFmpeg() {
 	if os.Getenv(EnvNoAutoFFmpeg) != "" {
 		return
 	}
+	// A build that carries its own ffmpeg (build tag bundleffmpeg) never touches
+	// the network: unpack it from the exe and use it.
+	if ffmpegPath, ffprobePath, ok := t.installBundledFFmpeg(); ok {
+		t.ffmpeg = ffmpegPath
+		t.ffprobe = ffprobePath
+		logf("transcoder: using the ffmpeg bundled in this exe (%s; ffprobe=%s)", ffmpegPath, ffprobePath)
+		return
+	}
 	ffmpegPath, ffprobePath, err := t.downloadFFmpeg()
 	if err != nil {
 		logf("transcoder: ffmpeg auto-download failed, local remux disabled: %v", err)
@@ -641,6 +649,43 @@ func (t *Transcoder) ensureFFmpeg() {
 	t.ffmpeg = ffmpegPath
 	t.ffprobe = ffprobePath
 	logf("transcoder: ffmpeg fetched for local playback (%s; ffprobe=%s)", ffmpegPath, ffprobePath)
+}
+
+// installBundledFFmpeg unpacks the ffmpeg that was embedded into this exe into
+// the cache directory and reports its paths. This is what keeps the portable
+// Windows exe offline: without a bundled copy the first remux would have to
+// download one. An existing copy of the same size is reused, so only the first
+// run (and the first run after an update) pays for the extraction.
+func (t *Transcoder) installBundledFFmpeg() (string, string, bool) {
+	ffmpegBytes, ffprobeBytes := BundledFFmpeg()
+	if len(ffmpegBytes) == 0 {
+		return "", "", false
+	}
+	dir := filepath.Join(t.cacheDir, "ffmpeg-bundled")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "", "", false
+	}
+	ffmpegPath := filepath.Join(dir, "ffmpeg"+executableSuffix())
+	ffprobePath := filepath.Join(dir, "ffprobe"+executableSuffix())
+	if err := writeFileOnce(ffmpegPath, ffmpegBytes); err != nil {
+		logf("transcoder: could not unpack the bundled ffmpeg: %v", err)
+		return "", "", false
+	}
+	if len(ffprobeBytes) > 0 {
+		if err := writeFileOnce(ffprobePath, ffprobeBytes); err != nil {
+			logf("transcoder: could not unpack the bundled ffprobe, falling back to ffmpeg -i: %v", err)
+			ffprobePath = ""
+		}
+	}
+	return ffmpegPath, ffprobePath, true
+}
+
+// writeFileOnce writes data unless an equally sized file already sits at path.
+func writeFileOnce(path string, data []byte) error {
+	if info, err := os.Stat(path); err == nil && info.Size() == int64(len(data)) {
+		return nil
+	}
+	return os.WriteFile(path, data, 0o755)
 }
 
 // ffmpegStaticAssets returns the eugeneware/ffmpeg-static asset names for the

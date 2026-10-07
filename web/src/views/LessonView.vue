@@ -9,14 +9,14 @@ import { api, formatTime, lessonRoute, navigateFull } from '../api.js'
 import { t, translateServerMessage } from '../i18n.js'
 import { useToast } from '../composables/useToast.js'
 import { useCast } from '../composables/useCast.js'
+import { PLAY_MODES, playMode, setPlayMode as savePlayMode, applyPlayMode } from '../composables/usePlayMode.js'
 
 const route = useRoute()
 const router = useRouter()
 const toast = useToast()
 
-// Preferences that have to survive page changes (playback speed, autoplay).
+// Preferences that have to survive page changes (playback speed).
 const RATE_KEY = 'offlineu.playbackRate'
-const AUTOPLAY_KEY = 'offlineu.autoplayNext'
 const SAVE_INTERVAL = 15 // seconds between two automatic progress saves
 
 function readPreference(key, fallback) {
@@ -44,8 +44,17 @@ const resources = ref([])
 const textContents = ref({})
 const completed = ref(false)
 const mediaEl = ref(null)
-const autoplayEnabled = ref(readPreference(AUTOPLAY_KEY, '1') !== '0')
 const playbackRate = ref(parseFloat(readPreference(RATE_KEY, '1')) || 1)
+
+// What happens when the current lesson ends: the shared, global setting
+// (see usePlayMode.js) - the same three modes drive the player and a cast. A
+// cast that is already running is told about the switch by setPlayMode itself,
+// so it never has to be restarted.
+function setPlayMode(mode) {
+  const data = castSession.value
+  const device = data && data.active && castBelongsHere(data) ? data.udn : ''
+  savePlayMode(mode, device).then(refreshCast)
+}
 
 // The cast that is running on a TV: the browser follows it, and the server
 // pushes the next lesson when this one ends.
@@ -101,6 +110,17 @@ const activeCast = computed(() => {
   if (!data || !lesson.value || data.lesson_path !== lesson.value.rel_path) return null
   return castBelongsHere(data) ? data : null
 })
+
+// While a cast runs the server owns the mode - it is the one applying it - so
+// the choice follows it (also after a reload, or when the TV moved on to the
+// next lesson on its own) and is remembered as the user's own setting.
+watch(
+  () => activeCast.value?.play_mode,
+  (mode) => {
+    if (mode === 'loop' || mode === 'once' || mode === 'next') applyPlayMode(mode)
+  },
+  { immediate: true }
+)
 
 const RATES = [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2]
 const isMedia = computed(() => Boolean(lesson.value && (lesson.value.video_file || lesson.value.audio_file)))
@@ -235,8 +255,18 @@ function onEnded() {
   const media = mediaEl.value
   save(media ? media.currentTime : 0, true)
   completed.value = true
+  if (playMode.value === 'loop') {
+    // Same lesson from the top. Seconds never move backwards in the store and
+    // the completion flag was just written, so a repeat cannot lose progress.
+    if (media) {
+      media.currentTime = 0
+      autoplay(media)
+    }
+    return
+  }
+  if (playMode.value !== 'next') return
   const href = payload.value && payload.value.autoplay_href
-  if (autoplayEnabled.value && href) {
+  if (href) {
     // ~1 s so the completion toast is readable before the next lesson loads
     advanceTimer = window.setTimeout(() => router.push(href), 900)
   }
@@ -254,11 +284,6 @@ function applyRate(rate) {
   writePreference(RATE_KEY, String(rate))
   const media = mediaEl.value
   if (media) media.playbackRate = rate
-}
-
-function toggleAutoplay() {
-  autoplayEnabled.value = !autoplayEnabled.value
-  writePreference(AUTOPLAY_KEY, autoplayEnabled.value ? '1' : '0')
 }
 
 function onKeydown(event) {
@@ -385,19 +410,34 @@ onBeforeUnmount(() => {
               <option v-for="rate in RATES" :key="rate" :value="rate">{{ rate }}×</option>
             </select>
           </label>
-          <label class="toolbar-check">
-            <input type="checkbox" :checked="autoplayEnabled" @change="toggleAutoplay" />
-            {{ t('lesson.autoplayNext') }}
-          </label>
-          <span v-if="payload.autoplay_title" class="faint">
+          <div class="toolbar-field">
+            <span class="faint">{{ t('lesson.whenFinished') }}</span>
+            <div class="seg" role="radiogroup" :aria-label="t('lesson.whenFinished')">
+              <button
+                v-for="mode in PLAY_MODES"
+                :key="mode.id"
+                type="button"
+                class="seg__btn"
+                :class="{ 'seg__btn--active': playMode === mode.id }"
+                role="radio"
+                :aria-checked="playMode === mode.id"
+                :title="t(mode.title)"
+                @click="setPlayMode(mode.id)"
+              >
+                {{ t(mode.label) }}
+              </button>
+            </div>
+          </div>
+          <span v-if="playMode === 'loop'" class="faint">{{ t('lesson.loopHint') }}</span>
+          <span v-else-if="playMode === 'next' && payload.autoplay_title" class="faint">
             {{ t('lesson.upNext') }} <strong>{{ payload.autoplay_title }}</strong>
           </span>
-          <span v-else class="faint">{{ t('lesson.lastLesson') }}</span>
+          <span v-else-if="playMode === 'next'" class="faint">{{ t('lesson.lastLesson') }}</span>
           <CastMenu
             :lesson="lesson"
             :enabled="payload.dlna_enabled !== false"
             :plan="payload.cast_plan || {}"
-            :autoplay="autoplayEnabled"
+            :play-mode="playMode"
             @casted="refreshCast"
           />
         </div>
@@ -556,6 +596,41 @@ onBeforeUnmount(() => {
   cursor: pointer;
   user-select: none;
   font-size: 0.9rem;
+}
+
+/* Segmented control for the play mode (loop / once / next) --------------- */
+.seg {
+  display: inline-flex;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overflow: hidden;
+  background: var(--surface-strong);
+}
+
+.seg__btn {
+  padding: 6px 12px;
+  background: none;
+  border: none;
+  border-right: 1px solid var(--border);
+  color: var(--text-muted);
+  font-size: 0.85rem;
+  cursor: pointer;
+  transition: all var(--transition);
+}
+
+.seg__btn:last-child {
+  border-right: none;
+}
+
+.seg__btn:hover {
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.seg__btn--active {
+  background: var(--accent-soft);
+  color: var(--text);
+  font-weight: 600;
 }
 
 .toolbar-check input {
