@@ -6,6 +6,7 @@ import LanguageSwitch from '../components/LanguageSwitch.vue'
 import CastMenu from '../components/CastMenu.vue'
 import CastBar from '../components/CastBar.vue'
 import { api, formatTime, lessonRoute, navigateFull } from '../api.js'
+import { refreshState, store } from '../store.js'
 import { t, translateServerMessage } from '../i18n.js'
 import { useToast } from '../composables/useToast.js'
 import { useCast } from '../composables/useCast.js'
@@ -375,6 +376,11 @@ onMounted(() => {
   const initial = route.params.lessonPath
   load(Array.isArray(initial) ? initial.join('/') : initial || '')
   window.addEventListener('keydown', onKeydown)
+  // The lesson page is often opened directly (deep link, fresh browser, cleared
+  // cache). The play modes are global server settings handed out by /api/state,
+  // and only the home view asks for them - without this the toolbar and the
+  // cast menu would silently fall back to localStorage here.
+  if (!store.loaded) refreshState()
 })
 
 onBeforeUnmount(() => {

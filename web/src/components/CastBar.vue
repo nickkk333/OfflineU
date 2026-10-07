@@ -214,8 +214,8 @@ async function stop() {
           {{ t(mode.label) }}
         </button>
       </div>
-      <span v-if="playMode === 'next' && hasNext" class="faint">{{ t('cast.nextUp', { title: session.next_title }) }}</span>
-      <span v-else-if="playMode === 'next'" class="faint">{{ t('cast.lastLesson') }}</span>
+      <span v-if="castPlayMode === 'next' && hasNext" class="faint">{{ t('cast.nextUp', { title: session.next_title }) }}</span>
+      <span v-else-if="castPlayMode === 'next'" class="faint">{{ t('cast.lastLesson') }}</span>
     </div>
   </div>
 </template>
