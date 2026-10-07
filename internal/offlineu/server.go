@@ -902,6 +902,16 @@ func (a *App) castTarget(baseURL string, course *Course, lesson *Lesson, mode st
 		title = BaseName(relative)
 	}
 	file := a.mediaFileFor(course, lesson)
+	// Subtitles travel as a separate URL the renderer fetches on its own, so they
+	// are attached no matter whether the video itself is transcoded or handed over
+	// as a plain file. The ?raw=1 makes the server return the subtitle verbatim
+	// (the TV decodes SRT/VTT itself, it does not want our WebVTT transcription).
+	subURL, subType, subMime := "", "", ""
+	if lesson.SubtitleFile != "" {
+		subURL = baseURL + fileURL("/subtitles/", lesson.SubtitleFile) + "?raw=1"
+		subType = captionType(lesson.SubtitleFile)
+		subMime = subtitleProtocolMime(subType)
+	}
 	switch strings.ToLower(strings.TrimSpace(mode)) {
 	case "on":
 		if !a.Transcoder.Available() {
@@ -922,10 +932,13 @@ func (a *App) castTarget(baseURL string, course *Course, lesson *Lesson, mode st
 	}
 	if file == "" {
 		return castTarget{Item: MediaItem{
-			Title: title,
-			URL:   baseURL + fileURL("/files/", relative),
-			Mime:  mime,
-			Class: class,
+			Title:        title,
+			URL:          baseURL + fileURL("/files/", relative),
+			Mime:         mime,
+			Class:        class,
+			SubtitleURL:  subURL,
+			SubtitleType: subType,
+			SubtitleMime: subMime,
 		}}, true, nil
 	}
 
@@ -941,10 +954,13 @@ func (a *App) castTarget(baseURL string, course *Course, lesson *Lesson, mode st
 	}
 	return castTarget{
 		Item: MediaItem{
-			Title: title,
-			URL:   baseURL + "/api/dlna/stream?" + query.Encode(),
-			Mime:  streamMime,
-			Class: streamClass,
+			Title:        title,
+			URL:          baseURL + "/api/dlna/stream?" + query.Encode(),
+			Mime:         streamMime,
+			Class:        streamClass,
+			SubtitleURL:  subURL,
+			SubtitleType: subType,
+			SubtitleMime: subMime,
 		},
 		Converted: true,
 	}, true, nil
@@ -1283,21 +1299,32 @@ func serveCourseFile(w http.ResponseWriter, r *http.Request, full, mime string) 
 	http.ServeContent(w, r, filepath.Base(full), info.ModTime(), handle)
 }
 
-// handleSubtitle serves subtitles as WebVTT, converting SRT (and friends) on
-// the fly because browsers cannot display them otherwise.
+// handleSubtitle serves subtitles. By default it converts SRT (and friends) to
+// WebVTT on the fly because browsers cannot display them otherwise. A ?raw=1
+// query returns the subtitle verbatim (still re-decoded to UTF-8): that is what
+// DLNA renderers want - the TV decodes SRT/VTT itself and would be confused by a
+// WebVTT transcription served under an .srt name.
 func (a *App) handleSubtitle(w http.ResponseWriter, r *http.Request) {
 	full, ok := a.resolveCourseFile(w, r, "/subtitles/")
 	if !ok {
 		return
 	}
+	raw := r.URL.Query().Get("raw") == "1"
 	var body string
-	if strings.EqualFold(filepath.Ext(full), ".vtt") {
-		raw, err := os.ReadFile(full)
+	if raw {
+		text, err := ReadSubtitleText(full)
 		if err != nil {
 			http.Error(w, "File not found", http.StatusNotFound)
 			return
 		}
-		body = string(raw)
+		body = text
+	} else if strings.EqualFold(filepath.Ext(full), ".vtt") {
+		rawBytes, err := os.ReadFile(full)
+		if err != nil {
+			http.Error(w, "File not found", http.StatusNotFound)
+			return
+		}
+		body = string(rawBytes)
 	} else {
 		text, err := ReadSubtitleText(full)
 		if err != nil {
@@ -1306,7 +1333,20 @@ func (a *App) handleSubtitle(w http.ResponseWriter, r *http.Request) {
 		}
 		body = ConvertSRTToVTT(text)
 	}
-	w.Header().Set("Content-Type", "text/vtt; charset=utf-8")
+	contentType := "text/vtt; charset=utf-8"
+	if raw {
+		// Renderers key off the Content-Type when deciding how to decode the
+		// external track, so tell the truth for each format.
+		switch strings.ToLower(filepath.Ext(full)) {
+		case ".vtt":
+			contentType = "text/vtt; charset=utf-8"
+		case ".srt", ".sbv":
+			contentType = "application/x-subrip; charset=utf-8"
+		default:
+			contentType = "text/plain; charset=utf-8"
+		}
+	}
+	w.Header().Set("Content-Type", contentType)
 	w.Header().Set("Cache-Control", "no-store")
 	_, _ = io.WriteString(w, body)
 }

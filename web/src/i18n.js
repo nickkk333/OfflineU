@@ -182,6 +182,7 @@ const en = {
     upNext: 'Up next:',
     lastLesson: 'This is the last lesson of the course',
     subtitles: 'Subtitles',
+    subtitleSent: 'Subtitles are sent to the TV with the cast',
     contentTitle: '📄 Content',
     loadingResource: 'Loading…',
     cannotPreview:
@@ -404,6 +405,7 @@ const zh = {
     upNext: '接下来：',
     lastLesson: '这已经是课程的最后一节',
     subtitles: '字幕',
+    subtitleSent: '字幕将随投屏一起发送到电视',
     contentTitle: '📄 相关文件',
     loadingResource: '加载中…',
     cannotPreview: '这种文件无法在浏览器中预览。请使用下面的链接，用对应的桌面应用打开它。',

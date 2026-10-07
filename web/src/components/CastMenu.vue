@@ -6,15 +6,13 @@ import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { api, formatTime, reloadPage } from '../api.js'
 import { t } from '../i18n.js'
 import { useToast } from '../composables/useToast.js'
+import { castPlayMode } from '../composables/usePlayMode.js'
 
 const props = defineProps({
   lesson: { type: Object, required: true },
   enabled: { type: Boolean, default: true },
   // What the server decided for this file: { needs_transcode, transcode_available }
-  plan: { type: Object, default: () => ({}) },
-  // What happens when the lesson ends: "once" (stop, default), "loop" or
-  // "next" - the server's watchdog then applies it to the device.
-  playMode: { type: String, default: 'once' }
+  plan: { type: Object, default: () => ({}) }
 })
 
 const emit = defineEmits(['casted'])
@@ -118,7 +116,10 @@ async function cast(device) {
       props.lesson.rel_path,
       resumeAt.value,
       compat.value,
-      props.playMode,
+      // The cast keeps its own play mode (single-loop / single / continuous) -
+      // independent of the browser player's, and remembered on the server - so
+      // starting a cast must not pick up the browser's local choice.
+      castPlayMode.value,
       duration
     )
     activeUDN.value = device.udn
@@ -226,6 +227,10 @@ onBeforeUnmount(() => {
 
       <p v-if="devices.length && resumeAt > 0" class="cast__hint faint">
         {{ t('cast.resumeFrom', { time: formatTime(resumeAt) }) }}
+      </p>
+
+      <p v-if="devices.length && lesson.subtitle_src" class="cast__hint faint">
+        📝 {{ t('cast.subtitleSent') }}
       </p>
 
       <div v-if="activeUDN" class="cast__active">

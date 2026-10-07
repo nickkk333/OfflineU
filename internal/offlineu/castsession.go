@@ -202,8 +202,9 @@ type CastSessionView struct {
 	Duration       float64 `json:"duration"`
 	State          string  `json:"state"`
 	Converted      bool    `json:"converted"`
-	PlayMode       string  `json:"play_mode"` // "once" (default), "loop" or "next"
-	Reported       bool    `json:"reported"`  // the device told us, not the clock
+	PlayMode       string  `json:"play_mode"`          // "once" (default), "loop" or "next"
+	Reported       bool    `json:"reported"`           // the device told us, not the clock
+	Subtitle       bool    `json:"subtitle,omitempty"` // the cast carries captions
 	NextTitle      string  `json:"next_title,omitempty"`
 	NextLessonPath string  `json:"next_lesson_path,omitempty"`
 }
@@ -311,6 +312,9 @@ func (a *App) castSnapshot() CastSessionView {
 		if next := nextPlayableLesson(course, session.LessonPath); next != nil {
 			view.NextTitle = next.Title
 			view.NextLessonPath = next.RelPath
+		}
+		if lesson := FindLessonInTree(course.Root, session.LessonPath); lesson != nil {
+			view.Subtitle = lesson.SubtitleFile != ""
 		}
 	}
 	return view

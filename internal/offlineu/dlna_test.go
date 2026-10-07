@@ -284,6 +284,39 @@ func TestDIDLMetadataEscapesAndClassifiesMedia(t *testing.T) {
 	}
 }
 
+// A cast with a subtitle must advertise it to the renderer through the Samsung
+// CaptionInfoEx extension, otherwise the TV has no way to fetch the captions.
+func TestDIDLMetadataCarriesSubtitles(t *testing.T) {
+	meta := didlMetadata(MediaItem{
+		Title:        "Lesson",
+		URL:          "http://10.0.0.2/lesson.mp4",
+		Mime:         "video/mp4",
+		Class:        "object.item.videoItem",
+		SubtitleURL:  "http://10.0.0.2/subtitles/lesson.srt?raw=1",
+		SubtitleType: "srt",
+	})
+	for _, want := range []string{
+		`xmlns:sec="http://www.sec.co.kr/dlna"`,
+		"sec:CaptionInfoEx",
+		`sec:type="srt"`,
+		// Generic subtitle <res> for LG/Sony/Android renderers.
+		`protocolInfo="http-get:*:*text/srt:*"`,
+		"http://10.0.0.2/subtitles/lesson.srt?raw=1",
+	} {
+		if !strings.Contains(meta, want) {
+			t.Errorf("DIDL missing %q:\n%s", want, meta)
+		}
+	}
+}
+
+// Without a subtitle the DIDL must stay free of the caption namespace.
+func TestDIDLMetadataHasNoCaptionNamespaceWithoutSubtitles(t *testing.T) {
+	meta := didlMetadata(MediaItem{Title: "T", URL: "http://x/a.mp4", Mime: "video/mp4"})
+	if strings.Contains(meta, "sec:") {
+		t.Errorf("unexpected sec namespace: %s", meta)
+	}
+}
+
 func TestSoapEnvelopeAndDurationFormat(t *testing.T) {
 	envelope := soapEnvelope(avTransportService, "SetAVTransportURI", [][2]string{{"CurrentURI", "http://10.0.0.2/a b.mp4"}})
 	if !strings.Contains(envelope, `xmlns:u="`+avTransportService+`"`) {

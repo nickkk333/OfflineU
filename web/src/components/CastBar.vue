@@ -143,6 +143,9 @@ async function stop() {
       <span v-if="paused" class="cast-bar__state">{{ t('cast.paused') }}</span>
       <span v-else-if="ended" class="cast-bar__state">{{ t('cast.finished') }}</span>
       <span v-else class="cast-bar__state cast-bar__state--live">{{ t('cast.playing') }}</span>
+      <span v-if="session.subtitle" class="cast-bar__badge" :title="t('cast.subtitleSent')">
+        📝 {{ t('cast.subtitles') }}
+      </span>
       <span class="spacer"></span>
       <span class="cast-bar__time mono">
         {{ formatTime(position) }}<template v-if="duration"> / {{ formatTime(duration) }}</template>
@@ -261,6 +264,15 @@ async function stop() {
   border-color: rgba(52, 211, 153, 0.4);
   background: var(--success-soft);
   color: var(--success);
+}
+
+.cast-bar__badge {
+  font-size: 0.74rem;
+  padding: 2px 9px;
+  border-radius: 999px;
+  border: 1px solid var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent-3);
 }
 
 .cast-bar__time {

@@ -17,6 +17,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -178,6 +179,14 @@ type MediaItem struct {
 	URL   string // absolute URL the renderer fetches
 	Mime  string // e.g. "video/mp4"
 	Class string // UPnP class: object.item.videoItem / object.item.audioItem.musicTrack
+	// SubtitleURL is the absolute URL of an attached subtitle the renderer can
+	// fetch on its own (the device plays the video, captions come separately).
+	// SubtitleType is the renderer's label for that format (e.g. "srt", "vtt"),
+	// and SubtitleMime is the protocolInfo MIME used for the generic <res> that
+	// non-Samsung TVs (LG, Sony, Android-based sets) rely on to discover it.
+	SubtitleURL  string
+	SubtitleType string
+	SubtitleMime string
 }
 
 // Cast points a renderer at item and starts playback. startSeconds is applied
@@ -446,6 +455,9 @@ func findAVTransport(device upnpDevice) (upnpService, upnpDevice, bool) {
 
 // didlMetadata builds the DIDL-Lite description most renderers expect next to
 // the URL: without it a TV often shows "unknown" instead of the lesson title.
+// When the lesson carries subtitles, the Samsung/DLNA "CaptionInfoEx" extension
+// tells the device where to fetch them from - so the TV shows captions without
+// anyone touching a remote (the device still decides whether to display them).
 func didlMetadata(item MediaItem) string {
 	class := item.Class
 	if class == "" {
@@ -458,14 +470,73 @@ func didlMetadata(item MediaItem) string {
 	var builder strings.Builder
 	builder.WriteString(`<DIDL-Lite xmlns="urn:schemas-upnp-org:metadata-1-0/DIDL-Lite/" ` +
 		`xmlns:dc="http://purl.org/dc/elements/1.1/" ` +
-		`xmlns:upnp="urn:schemas-upnp-org:metadata-1-0/upnp/">`)
+		`xmlns:upnp="urn:schemas-upnp-org:metadata-1-0/upnp/"`)
+	if item.SubtitleURL != "" {
+		builder.WriteString(` xmlns:sec="http://www.sec.co.kr/dlna"`)
+	}
+	builder.WriteString(`>`)
 	builder.WriteString(`<item id="offlineu-0" parentID="-1" restricted="1">`)
 	builder.WriteString(`<dc:title>` + escapeXML(item.Title) + `</dc:title>`)
 	builder.WriteString(`<upnp:class>` + escapeXML(class) + `</upnp:class>`)
 	builder.WriteString(`<res protocolInfo="http-get:*:` + escapeXML(mime) + `:*">` +
 		escapeXML(item.URL) + `</res>`)
+	if item.SubtitleURL != "" {
+		captionType := item.SubtitleType
+		if captionType == "" {
+			captionType = "srt"
+		}
+		// Samsung (and clones) read the sec:CaptionInfoEx / CaptionInfo extension.
+		builder.WriteString(`<sec:CaptionInfoEx sec:type="` + escapeXML(captionType) + `">` +
+			escapeXML(item.SubtitleURL) + `</sec:CaptionInfoEx>`)
+		builder.WriteString(`<sec:CaptionInfo sec:type="` + escapeXML(captionType) + `">` +
+			escapeXML(item.SubtitleURL) + `</sec:CaptionInfo>`)
+		// LG, Sony and most Android-based sets (Xiaomi, Hisense, TCL...) ignore the
+		// sec extension and instead treat a second <res> whose MIME is obviously not
+		// video as an external subtitle track. Its protocolInfo MIME must match what
+		// the renderer expects for that format.
+		subMime := item.SubtitleMime
+		if subMime == "" {
+			subMime = subtitleProtocolMime(captionType)
+		}
+		builder.WriteString(`<res protocolInfo="http-get:*:*` + escapeXML(subMime) + `:*">` +
+			escapeXML(item.SubtitleURL) + `</res>`)
+	}
 	builder.WriteString(`</item></DIDL-Lite>`)
 	return builder.String()
+}
+
+// captionType maps a subtitle file's extension onto the label renderers expect
+// in a CaptionInfoEx "sec:type" attribute. Devices differ, so this is best
+// effort: the common formats (SRT, VTT) are exact, the rest fall back to the
+// closest thing a TV is likely to accept.
+func captionType(name string) string {
+	switch strings.ToLower(filepath.Ext(name)) {
+	case ".srt", ".sbv":
+		return "srt"
+	case ".vtt":
+		return "vtt"
+	case ".sub":
+		return "sub"
+	case ".smi", ".sami", ".ass", ".ssa":
+		return "smi"
+	default:
+		return "srt"
+	}
+}
+
+// subtitleProtocolMime returns the protocolInfo MIME a generic renderer expects
+// for an external subtitle track of the given CaptionInfoEx type.
+func subtitleProtocolMime(captionType string) string {
+	switch captionType {
+	case "vtt":
+		return "text/vtt"
+	case "sub":
+		return "text/plain"
+	case "smi":
+		return "text/smi"
+	default: // srt and anything unknown
+		return "text/srt"
+	}
 }
 
 // PositionInfo is the answer to GetPositionInfo: where the renderer really is

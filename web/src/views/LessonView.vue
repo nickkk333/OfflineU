@@ -157,6 +157,19 @@ const lessonLocation = computed(() => {
 })
 // The backend writes its warnings in English; this localises the known ones.
 const storageWarning = computed(() => translateServerMessage(payload.value?.storage_warning || ''))
+
+// Guess the subtitle language from its file name so the <track> gets a truthful
+// label (the server only knows it found a .srt/.vtt beside the video).
+const subtitleLang = computed(() => {
+  const name = (lesson.value?.subtitle_file || lesson.value?.subtitle_src || '').toLowerCase()
+  if (/zh|cn|chs|chi|中文|汉语|chinese/.test(name)) return 'zh'
+  if (/ja|jp|日|japanese/.test(name)) return 'ja'
+  if (/ko|kr|韩|korean/.test(name)) return 'ko'
+  if (/fr|french|法/.test(name)) return 'fr'
+  if (/de|german|德/.test(name)) return 'de'
+  if (/en|eng|英|english/.test(name)) return 'en'
+  return 'zh' // most course material here is Chinese; browsers still show it either way
+})
 let warningShown = false
 
 let currentPath = ''
@@ -399,7 +412,6 @@ onBeforeUnmount(() => {
           :lesson="lesson"
           :enabled="payload.dlna_enabled !== false"
           :plan="payload.cast_plan || {}"
-          :play-mode="playMode"
           @casted="refreshCast"
         />
         <LanguageSwitch />
@@ -489,7 +501,7 @@ onBeforeUnmount(() => {
             v-if="lesson.subtitle_src"
             kind="subtitles"
             :src="lesson.subtitle_src"
-            srclang="en"
+            :srclang="subtitleLang"
             :label="t('lesson.subtitles')"
             default
           />
@@ -511,7 +523,7 @@ onBeforeUnmount(() => {
             v-if="lesson.subtitle_src"
             kind="subtitles"
             :src="lesson.subtitle_src"
-            srclang="en"
+            :srclang="subtitleLang"
             :label="t('lesson.subtitles')"
             default
           />

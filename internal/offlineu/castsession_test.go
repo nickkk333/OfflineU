@@ -855,6 +855,37 @@ func TestCastInOnceModeStopsTheDevice(t *testing.T) {
 	}
 }
 
+// Casting a lesson that ships a subtitle must tell the renderer where to fetch it
+// (the TV plays the video and loads captions from this URL on its own).
+func TestCastSendsSubtitlesInDIDL(t *testing.T) {
+	env := newTestEnv(t)
+	env.loadCourse()
+	fake := newFakeRenderer(t)
+	seedRenderers(env.app.DLNA, fake.renderer(t))
+
+	if response := env.request(http.MethodPost, "/api/dlna/cast", map[string]any{
+		"device":      "uuid:fake-renderer",
+		"lesson_path": "Section 1/01 - Intro.mp4",
+	}); response.Code != http.StatusOK {
+		t.Fatalf("status = %d %s", response.Code, response.Body.String())
+	}
+	body := fake.bodyOf(0)
+	if !strings.Contains(body, "sec:CaptionInfoEx") {
+		t.Errorf("the DIDL carries no subtitle caption info: %s", body)
+	}
+	if !strings.Contains(body, "http://example.com/subtitles/Section%201/01%20-%20Intro.srt?raw=1") {
+		t.Errorf("the subtitle URL is missing from the DIDL: %s", body)
+	}
+	// The generic <res> subtitle track must be present for non-Samsung TVs.
+	if !strings.Contains(body, "*text/srt:*") {
+		t.Errorf("the generic subtitle <res> is missing: %s", body)
+	}
+	// The sec namespace is declared with XML-escaped quotes inside the SOAP body.
+	if !strings.Contains(body, "sec.co.kr/dlna") {
+		t.Errorf("the sec namespace is missing: %s", body)
+	}
+}
+
 // The last lesson of a course ends the cast the same way, in 连播 as well.
 func TestCastStopsTheDeviceAfterTheLastLesson(t *testing.T) {
 	env := newTestEnv(t)
