@@ -115,9 +115,12 @@ LABEL org.opencontainers.image.title="OfflineU" \
 USER offlineu
 EXPOSE 5000
 
-# The base image ships BusyBox wget, so no extra package is needed.
+# The base image ships BusyBox wget, so no extra package is needed. The port is
+# expanded by the container's shell at run time, so a container started with a
+# custom OFFLINEU_PORT (e.g. docker/run.ps1 -Port 8080) is not reported as
+# unhealthy for listening somewhere else than the image default.
 HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
-  CMD wget -qO- http://127.0.0.1:5000/health >/dev/null 2>&1 || exit 1
+  CMD wget -qO- http://127.0.0.1:${OFFLINEU_PORT:-5000}/health >/dev/null 2>&1 || exit 1
 
 # Optional course path can be appended: docker run ... /courses/My Course
 # The entrypoint picks the copy with the read capability (CAP_DAC_OVERRIDE) and
