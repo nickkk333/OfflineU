@@ -189,6 +189,10 @@ func TestWatchdogContinuesWithTheNextLesson(t *testing.T) {
 	if session.StartSeconds != 0 || session.State != CastStatePlaying {
 		t.Errorf("session = %+v", session)
 	}
+	// A cast that carries on must not be stopped in between.
+	if countOf(fake.recorded(), "Stop") != 0 {
+		t.Errorf("the device was stopped although the cast continues: %v", fake.recorded())
+	}
 	// Intro is finished, and the stored progress says so.
 	stored := struct {
 		Completed       bool `json:"completed"`
@@ -820,6 +824,64 @@ func TestCastPlayModeLoopRestartsTheSameLesson(t *testing.T) {
 	}
 }
 
+// 单播不循环: when the lesson is over the cast really ends - the device is told
+// to stop instead of being left at the end of the file.
+func TestCastInOnceModeStopsTheDevice(t *testing.T) {
+	env := newTestEnv(t)
+	env.loadCourse()
+	fake := newFakeRenderer(t)
+	seedRenderers(env.app.DLNA, fake.renderer(t))
+
+	if response := env.request(http.MethodPost, "/api/dlna/cast", map[string]any{
+		"device":      "uuid:fake-renderer",
+		"lesson_path": "Section 1/01 - Intro.mp4",
+		"play_mode":   PlayModeOnce,
+	}); response.Code != http.StatusOK {
+		t.Fatalf("status = %d %s", response.Code, response.Body.String())
+	}
+	session := env.app.currentCast()
+	t.Cleanup(func() { env.app.endCast(session) })
+	session.Duration = 60
+	session.StartedAt = time.Now().Add(-61 * time.Second)
+
+	if env.app.castTick(session) {
+		t.Error("the cast should be over when the lesson ends")
+	}
+	if session.State != CastStateEnded {
+		t.Errorf("state = %q", session.State)
+	}
+	if countOf(fake.recorded(), "Stop") != 1 {
+		t.Errorf("the device was not stopped: %v", fake.recorded())
+	}
+}
+
+// The last lesson of a course ends the cast the same way, in 连播 as well.
+func TestCastStopsTheDeviceAfterTheLastLesson(t *testing.T) {
+	env := newTestEnv(t)
+	env.loadCourse()
+	fake := newFakeRenderer(t)
+	seedRenderers(env.app.DLNA, fake.renderer(t))
+
+	if response := env.request(http.MethodPost, "/api/dlna/cast", map[string]any{
+		"device":      "uuid:fake-renderer",
+		"lesson_path": "Section 1/06 - Wrap Up.mp4",
+		"play_mode":   PlayModeNext,
+	}); response.Code != http.StatusOK {
+		t.Fatalf("status = %d %s", response.Code, response.Body.String())
+	}
+	session := env.app.currentCast()
+	t.Cleanup(func() { env.app.endCast(session) })
+	session.Duration = 60
+	session.StartedAt = time.Now().Add(-61 * time.Second)
+
+	if env.app.castTick(session) {
+		t.Error("there is no lesson left, so the cast should end")
+	}
+	if countOf(fake.recorded(), "Stop") != 1 {
+		t.Errorf("the device was not stopped after the last lesson: %v", fake.recorded())
+	}
+}
+
 // The mode is a live setting: switching it while the TV is playing has to reach
 // the watchdog, which is the part that actually applies it.
 func TestPlayModeCanBeChangedWhileTheCastRuns(t *testing.T) {
@@ -841,8 +903,8 @@ func TestPlayModeCanBeChangedWhileTheCastRuns(t *testing.T) {
 	}
 
 	response := env.request(http.MethodPost, "/api/settings", map[string]any{
-		"device":    "uuid:fake-renderer",
-		"play_mode": PlayModeNext,
+		"device":         "uuid:fake-renderer",
+		"cast_play_mode": PlayModeNext,
 	})
 	if response.Code != http.StatusOK {
 		t.Fatalf("status = %d %s", response.Code, response.Body.String())
@@ -891,9 +953,10 @@ func TestPlayModeWakesAnEndedCastUpAgain(t *testing.T) {
 		t.Fatalf("state = %q", session.State)
 	}
 	setURI := countOf(fake.recorded(), "SetAVTransportURI")
+	stops := countOf(fake.recorded(), "Stop")
 
 	if response := env.request(http.MethodPost, "/api/settings", map[string]any{
-		"play_mode": PlayModeLoop,
+		"cast_play_mode": PlayModeLoop,
 	}); response.Code != http.StatusOK {
 		t.Fatalf("status = %d %s", response.Code, response.Body.String())
 	}
@@ -909,6 +972,11 @@ func TestPlayModeWakesAnEndedCastUpAgain(t *testing.T) {
 	}
 	if countOf(fake.recorded(), "SetAVTransportURI") != setURI+1 {
 		t.Errorf("the lesson was not handed to the device again: %v", fake.recorded())
+	}
+	// The Stop above came from the "once" ending that is being undone here; the
+	// loop that follows must not stop the device again.
+	if countOf(fake.recorded(), "Stop") != stops+0 {
+		t.Errorf("a looping cast must not be stopped again: %v", fake.recorded())
 	}
 }
 

@@ -223,6 +223,7 @@ func (a *App) handleState(w http.ResponseWriter, r *http.Request) {
 			"mount_hint":      MountHintFor(requestLanguage(r)),
 			"dlna_enabled":    a.Config.DLNAEnabled,
 			"play_mode":       a.Store.PlayMode(),
+			"cast_play_mode":  a.Store.CastPlayMode(),
 		})
 		return
 	}
@@ -244,6 +245,7 @@ func (a *App) handleState(w http.ResponseWriter, r *http.Request) {
 		"mount_hint":      MountHintFor(requestLanguage(r)),
 		"dlna_enabled":    a.Config.DLNAEnabled,
 		"play_mode":       a.Store.PlayMode(),
+		"cast_play_mode":  a.Store.CastPlayMode(),
 	})
 }
 
@@ -798,6 +800,10 @@ func (a *App) handleDLNACast(w http.ResponseWriter, r *http.Request) {
 
 	// Remember what is playing: the browser shows the position and the
 	// watchdog applies the play mode when this lesson ends.
+	// A cast remembers its own mode: what was picked here is the cast setting,
+	// not the one the browser player uses.
+	a.Store.SetCastPlayMode(playMode)
+
 	session := &CastSession{
 		UDN:          renderer.UDN,
 		Device:       renderer.DisplayName(),
@@ -1150,29 +1156,41 @@ func (a *App) handleSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var payload struct {
-		Device   string `json:"device"`    // optional: only to be sure which device is meant
-		PlayMode string `json:"play_mode"` // "once", "loop" or "next"
+		Device       string `json:"device"`         // optional: only to be sure which device is meant
+		PlayMode     string `json:"play_mode"`      // browser player: "once", "loop" or "next"
+		CastPlayMode string `json:"cast_play_mode"` // cast on a renderer
 	}
 	if err := decodeJSON(r, &payload); err != nil {
-		writeError(w, http.StatusBadRequest, "play_mode is required")
+		writeError(w, http.StatusBadRequest, "play_mode or cast_play_mode is required")
 		return
 	}
-	if strings.TrimSpace(payload.PlayMode) == "" {
-		writeError(w, http.StatusBadRequest, "play_mode must be once, loop or next")
+	wantsLocal := strings.TrimSpace(payload.PlayMode) != ""
+	wantsCast := strings.TrimSpace(payload.CastPlayMode) != ""
+	if !wantsLocal && !wantsCast {
+		writeError(w, http.StatusBadRequest, "play_mode or cast_play_mode is required")
 		return
 	}
-	mode := a.Store.SetPlayMode(payload.PlayMode)
 
-	// A cast picks the new mode up at once - no need to start it again.
-	if session := a.currentCast(); session != nil {
-		if device := strings.TrimSpace(payload.Device); device == "" || device == session.UDN {
-			a.setPlayMode(session, mode)
+	// The browser player and the cast keep their own choice: setting one never
+	// touches the other.
+	if wantsLocal {
+		a.Store.SetPlayMode(payload.PlayMode)
+	}
+	castMode := ""
+	if wantsCast {
+		castMode = a.Store.SetCastPlayMode(payload.CastPlayMode)
+		// A running cast picks the new mode up at once - no need to start again.
+		if session := a.currentCast(); session != nil {
+			if device := strings.TrimSpace(payload.Device); device == "" || device == session.UDN {
+				a.setPlayMode(session, castMode)
+			}
 		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"success":   true,
-		"play_mode": mode,
-		"session":   a.castSnapshot(),
+		"success":        true,
+		"play_mode":      a.Store.PlayMode(),
+		"cast_play_mode": a.Store.CastPlayMode(),
+		"session":        a.castSnapshot(),
 	})
 }
 

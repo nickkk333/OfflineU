@@ -4,9 +4,11 @@
 // lets the lesson be paused, skipped or stopped from the browser. When the
 // device reaches the end, the server pushes the next lesson by itself.
 import { computed, ref, watch } from 'vue'
-import { api, formatTime, lessonRoute } from '../api.js'
+import { useRouter } from 'vue-router'
+import { api, formatTime, lessonRoute, navigateFull } from '../api.js'
 import { t } from '../i18n.js'
 import { useToast } from '../composables/useToast.js'
+import { loadCourse, store } from '../store.js'
 import { PLAY_MODES, playMode, setPlayMode as savePlayMode, applyPlayMode } from '../composables/usePlayMode.js'
 
 const props = defineProps({
@@ -17,7 +19,31 @@ const props = defineProps({
 })
 
 const emit = defineEmits(['refresh', 'ended'])
+const router = useRouter()
 const toast = useToast()
+
+// Open the lesson the TV is playing - in whichever course it lives: another
+// course is loaded first (the cast keeps playing throughout, it lives on the
+// server), then the lesson itself opens.
+async function openLesson() {
+  const target = lessonRoute(props.session.lesson_url)
+  if (!target) return
+  const wanted = props.session.course_path
+  const current = store.course?.path
+  // Another course (or none at all, e.g. the picker) has to be opened first.
+  if (wanted && wanted !== current) {
+    try {
+      await loadCourse(wanted)
+    } catch (cause) {
+      toast.error(cause.message)
+      return
+    }
+    // A course switch throws the in-memory player away, so go there for real.
+    navigateFull(target)
+    return
+  }
+  router.push(target)
+}
 
 // The same three choices the lesson page offers, and the very same setting:
 // usePlayMode stores it on the server, so the mode picked here is still the one
@@ -158,13 +184,14 @@ async function stop() {
       <button type="button" class="btn btn--sm btn--ghost" :disabled="!hasNext" @click="control('next')">
         {{ t('cast.next') }}
       </button>
-      <RouterLink
+      <button
         v-if="showOpen && session.lesson_url"
+        type="button"
         class="btn btn--sm btn--ghost"
-        :to="lessonRoute(session.lesson_url)"
+        @click="openLesson"
       >
         {{ t('cast.openLesson') }}
-      </RouterLink>
+      </button>
       <button type="button" class="btn btn--sm" @click="stop">{{ t('cast.stop') }}</button>
       <span class="spacer"></span>
       <div class="seg" role="radiogroup" :aria-label="t('lesson.whenFinished')">
@@ -198,7 +225,12 @@ async function stop() {
   margin-bottom: 16px;
   border-radius: var(--radius);
   border: 1px solid var(--accent);
-  background: var(--accent-soft);
+  /* 投屏界面始终置顶：滚动时它也一直看得见（投屏面板 .cast__panel 的层级更高） */
+  position: sticky;
+  top: 8px;
+  z-index: 60;
+  background: var(--surface-solid);
+  box-shadow: var(--shadow);
 }
 
 .cast-bar__head {

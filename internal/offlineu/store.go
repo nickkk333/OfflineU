@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 )
@@ -27,11 +28,12 @@ type RecentCourse struct {
 type stateData struct {
 	ActiveCourse  string         `json:"active_course,omitempty"`
 	RecentCourses []RecentCourse `json:"recent_courses"`
-	// PlayMode is the global "when the lesson ends" setting (once / loop / next).
-	// It lives here - and not only in the browser - so the choice survives a new
-	// browser, a cleared cache and a restart: every client picks it up again from
-	// /api/state.
-	PlayMode string `json:"play_mode,omitempty"`
+	// What happens when a lesson ends. The browser player and a cast on a TV keep
+	// their own choice: both can play at the same time, so one must not change
+	// the other. Both live here - and not only in the browser - so every client
+	// (new browser, cleared cache, restart) picks them up again from /api/state.
+	PlayMode     string `json:"play_mode,omitempty"`      // browser player
+	CastPlayMode string `json:"cast_play_mode,omitempty"` // cast on a renderer
 }
 
 // CourseStore is the thread-safe holder of the active course plus the list of
@@ -173,22 +175,47 @@ func (s *CourseStore) Forget(path string) {
 	s.writeState(state)
 }
 
-// PlayMode is the remembered "when the lesson ends" setting. An empty or unknown
-// value means the product default ("once"), so a state file written by an older
-// release (or edited by hand) can never break the player.
+// PlayMode is what the browser player does when a lesson ends. An empty or
+// unknown value means the product default ("once"), so a state file written by
+// an older release (or edited by hand) can never break the player.
 func (s *CourseStore) PlayMode() string {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return normalizePlayMode(s.readState().PlayMode)
 }
 
-// SetPlayMode remembers the setting for every client and returns what was stored.
+// SetPlayMode remembers the browser setting for every client and returns what
+// was stored.
 func (s *CourseStore) SetPlayMode(mode string) string {
 	normalized := normalizePlayMode(mode)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	state := s.readState()
 	state.PlayMode = normalized
+	s.writeState(state)
+	return normalized
+}
+
+// CastPlayMode is what a cast does when the lesson it plays ends - its own
+// setting, next to the one the browser player uses. Until the cast mode is
+// chosen on its own it follows the shared value older releases stored.
+func (s *CourseStore) CastPlayMode() string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	state := s.readState()
+	if strings.TrimSpace(state.CastPlayMode) == "" {
+		return normalizePlayMode(state.PlayMode)
+	}
+	return normalizePlayMode(state.CastPlayMode)
+}
+
+// SetCastPlayMode remembers the cast setting and returns what was stored.
+func (s *CourseStore) SetCastPlayMode(mode string) string {
+	normalized := normalizePlayMode(mode)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	state := s.readState()
+	state.CastPlayMode = normalized
 	s.writeState(state)
 	return normalized
 }

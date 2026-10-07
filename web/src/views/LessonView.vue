@@ -9,7 +9,7 @@ import { api, formatTime, lessonRoute, navigateFull } from '../api.js'
 import { t, translateServerMessage } from '../i18n.js'
 import { useToast } from '../composables/useToast.js'
 import { useCast } from '../composables/useCast.js'
-import { PLAY_MODES, playMode, setPlayMode as savePlayMode, applyPlayMode } from '../composables/usePlayMode.js'
+import { PLAY_MODES, playMode, setPlayMode as savePlayMode, applyPlayMode, applyCastPlayMode } from '../composables/usePlayMode.js'
 
 const route = useRoute()
 const router = useRouter()
@@ -46,14 +46,11 @@ const completed = ref(false)
 const mediaEl = ref(null)
 const playbackRate = ref(parseFloat(readPreference(RATE_KEY, '1')) || 1)
 
-// What happens when the current lesson ends: the shared, global setting
-// (see usePlayMode.js) - the same three modes drive the player and a cast. A
-// cast that is already running is told about the switch by setPlayMode itself,
-// so it never has to be restarted.
+// What the *browser player* does when the lesson ends: its own global setting
+// (see usePlayMode.js). The cast keeps a separate one, so this never changes
+// what the TV does - even while both are playing.
 function setPlayMode(mode) {
-  const data = castSession.value
-  const device = data && data.active && castBelongsHere(data) ? data.udn : ''
-  savePlayMode(mode, device).then(refreshCast)
+  savePlayMode(mode)
 }
 
 // The cast that is running on a TV: the browser follows it, and the server
@@ -71,14 +68,25 @@ function castBelongsHere(data) {
   return true
 }
 
-// Follow the TV: when it moves on to the next lesson, this page does too.
-// Compared against the route (not against the lesson that is loaded, which
-// lags behind while a lesson is still being fetched).
+// Follow the TV - but only as long as the page is watching along: the page moves
+// to the next lesson when the device does, and nothing happens when the reader
+// went somewhere else on their own (another lesson of this course, or another
+// course). Local browsing and playback never get interrupted by the cast, and
+// the cast is never interrupted by them: it lives on the server.
+let castLesson = ''
 watch(castSession, (data) => {
-  if (!castBelongsHere(data) || !data.lesson_url) return
-  const target = lessonRoute(data.lesson_url)
-  if (!target || isSamePath(target, route.path)) return
-  router.push(target)
+  if (!data || !castBelongsHere(data) || !data.lesson_url) {
+    castLesson = ''
+    return
+  }
+  const previous = castLesson
+  castLesson = data.lesson_url
+  if (!previous || previous === castLesson) return // nothing moved on the TV
+  // Only follow from the lesson the TV is leaving, otherwise the reader would be
+  // yanked back from whatever they opened in the meantime.
+  if (!isSamePath(lessonRoute(previous), route.path)) return
+  const target = lessonRoute(castLesson)
+  if (target) router.push(target)
 })
 
 // The router keeps percent escapes, a manually typed address may not.
@@ -95,9 +103,11 @@ watch(
   castSession,
   (data) => {
     // The TV finished the lesson: reload so the completion mark and the
-    // progress counters of this page match what was stored.
+    // progress counters of this page match what was stored. Only the page of
+    // that very lesson is touched - anything else the reader has opened stays.
     if (!data || !data.active || data.state !== 'ended' || castEndedHandled) return
     if (!castBelongsHere(data) || !lesson.value || lesson.value.completed) return
+    if (data.lesson_path !== lesson.value.rel_path) return
     castEndedHandled = true
     load(lesson.value.rel_path)
   }
@@ -111,13 +121,24 @@ const activeCast = computed(() => {
   return castBelongsHere(data) ? data : null
 })
 
-// While a cast runs the server owns the mode - it is the one applying it - so
-// the choice follows it (also after a reload, or when the TV moved on to the
-// next lesson on its own) and is remembered as the user's own setting.
+// Starting a cast takes the lesson to the TV, so the browser has to stop
+// playing it: two copies of the same audio help nobody, and the local position
+// would drift away from the one the device reports.
+watch(activeCast, (data) => {
+  if (!data) return
+  const media = mediaEl.value
+  if (!media) return
+  if (media.currentTime > 0) save(media.currentTime)
+  media.pause()
+})
+
+// A cast carries its own mode (the server applies it to the device): follow it
+// so the cast bar and this page show what the TV really does, without touching
+// the browser player's own choice.
 watch(
   () => activeCast.value?.play_mode,
   (mode) => {
-    if (mode === 'loop' || mode === 'once' || mode === 'next') applyPlayMode(mode)
+    if (mode === 'loop' || mode === 'once' || mode === 'next') applyCastPlayMode(mode)
   },
   { immediate: true }
 )
@@ -192,7 +213,14 @@ function initialisePlayer() {
   if (media.readyState >= 1) applyResume()
   else media.addEventListener('loadedmetadata', applyResume, { once: true })
 
-  if (payload.value.requested_autoplay) autoplay(media)
+  // ?autoplay=1 (the resume card, or the jump from the previous lesson) must not
+  // start the local player when a cast is running - the TV is what plays now.
+  // The cast session is checked too, not only the one matching this lesson:
+  // right after "cast" the poll may not have named the lesson yet.
+  const casting = Boolean(
+    activeCast.value || (castSession.value && castSession.value.active && castBelongsHere(castSession.value))
+  )
+  if (payload.value.requested_autoplay && !casting) autoplay(media)
 }
 
 function autoplay(media) {
@@ -365,6 +393,15 @@ onBeforeUnmount(() => {
         <TypeIcon :type="lesson.lesson_type" />
         <span class="spacer"></span>
         <span class="badge">{{ positionLabel }}</span>
+        <!-- 投屏按钮只出现在播放页，紧挨中英文切换 -->
+        <CastMenu
+          v-if="isMedia"
+          :lesson="lesson"
+          :enabled="payload.dlna_enabled !== false"
+          :plan="payload.cast_plan || {}"
+          :play-mode="playMode"
+          @casted="refreshCast"
+        />
         <LanguageSwitch />
         <button
           type="button"
@@ -433,13 +470,6 @@ onBeforeUnmount(() => {
             {{ t('lesson.upNext') }} <strong>{{ payload.autoplay_title }}</strong>
           </span>
           <span v-else-if="playMode === 'next'" class="faint">{{ t('lesson.lastLesson') }}</span>
-          <CastMenu
-            :lesson="lesson"
-            :enabled="payload.dlna_enabled !== false"
-            :plan="payload.cast_plan || {}"
-            :play-mode="playMode"
-            @casted="refreshCast"
-          />
         </div>
 
         <video

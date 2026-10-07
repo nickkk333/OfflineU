@@ -254,7 +254,8 @@ onBeforeUnmount(() => {
   position: absolute;
   right: 0;
   top: calc(100% + 10px);
-  z-index: 20;
+  /* 置顶：比页面里任何卡片、工具条和置顶的投屏条都高 */
+  z-index: 999;
   width: min(340px, 78vw);
   padding: 16px;
   border-radius: var(--radius);

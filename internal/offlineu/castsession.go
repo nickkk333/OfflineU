@@ -420,6 +420,7 @@ func (a *App) castTick(session *CastSession) bool {
 			session.State = CastStateEnded
 			session.watching = false
 			a.cast.mutex.Unlock()
+			a.stopCastDevice(session)
 			return false
 		}
 		logf("dlna: %s repeats %q", session.Device, session.LessonTitle)
@@ -429,6 +430,10 @@ func (a *App) castTick(session *CastSession) bool {
 		session.State = CastStateEnded
 		session.watching = false
 		a.cast.mutex.Unlock()
+		// 单播不循环 really means the cast is over when the lesson is: stop the
+		// device as well, instead of only stopping to look after it (a renderer
+		// left alone may sit at the end of the file or carry on by itself).
+		a.stopCastDevice(session)
 		return false
 	}
 	a.cast.mutex.Unlock()
@@ -441,6 +446,9 @@ func (a *App) castTick(session *CastSession) bool {
 		session.State = CastStateEnded
 		session.watching = false
 		a.cast.mutex.Unlock()
+		// This was the last lesson (or the device could not be reached): nothing
+		// is going to follow, so the device should stop too.
+		a.stopCastDevice(session)
 		return false
 	}
 	logf("dlna: %s continues with %q", session.Device, session.LessonTitle)
@@ -609,6 +617,24 @@ func (a *App) castRestart(session *CastSession) error {
 	}
 	a.cast.mutex.Unlock()
 	return nil
+}
+
+// stopCastDevice tells the device to stop playing. It is best effort: a TV that
+// was switched off cannot be reached, and the cast is over either way - this
+// only makes the end visible on the device too (单播不循环).
+func (a *App) stopCastDevice(session *CastSession) {
+	if session == nil {
+		return
+	}
+	renderer, ok := a.DLNA.Lookup(session.UDN)
+	if !ok {
+		return
+	}
+	if err := a.DLNA.Control(renderer, "stop"); err != nil {
+		logf("dlna: the device could not be stopped after %q: %v", session.LessonTitle, err)
+		return
+	}
+	logf("dlna: %s stopped after %q (play mode once)", session.Device, session.LessonTitle)
 }
 
 // probeContext is the deadline for an ffprobe call that is not tied to a

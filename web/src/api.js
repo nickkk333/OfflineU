@@ -67,13 +67,18 @@ export const api = {
         duration: Math.floor(duration || 0)
       })
     }),
-  // The global "when the lesson ends" setting (once / loop / next). The server
-  // stores it, so it survives a new browser and a cleared cache; a cast that is
-  // already running picks it up at the same time.
-  setPlayMode: (playMode, device) =>
+  // Two global "when the lesson ends" settings (once / loop / next) - one for
+  // the browser player, one for a cast. The server stores both, so each of them
+  // survives a new browser and a cleared cache; they never change each other.
+  setPlayMode: (playMode) =>
     request('/api/settings', {
       method: 'POST',
-      body: JSON.stringify({ play_mode: playMode, ...(device ? { device } : {}) })
+      body: JSON.stringify({ play_mode: playMode })
+    }),
+  setCastPlayMode: (playMode, device) =>
+    request('/api/settings', {
+      method: 'POST',
+      body: JSON.stringify({ cast_play_mode: playMode, ...(device ? { device } : {}) })
     }),
   castControl: (device, action, position) =>
     request('/api/dlna/control', {

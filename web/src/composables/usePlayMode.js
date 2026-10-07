@@ -1,11 +1,10 @@
-// What happens when a lesson ends: 单播循环 (loop), 单播不循环 (once) or 连播
-// (next). One choice for the whole app, because the same three modes drive the
-// browser player and a cast on the TV.
+// What happens when a lesson ends: 单播循环 (loop), 单播不循环 (once) or 连播 (next).
 //
-// The server is the source of truth: the choice is stored there (next to the
-// course bookkeeping) and handed to every client through /api/state, so it
-// survives a new browser, another machine or a cleared cache. localStorage is
-// only a cache for the first paint and for the moment before the state arrives.
+// The browser player and a cast keep *their own* choice: both can play at the
+// same time, so switching one must never change the other. Both are stored on
+// the server (next to the course bookkeeping) and handed to every client through
+// /api/state, so each of them survives a new browser, another machine or a
+// cleared cache. localStorage is only the first-paint cache.
 import { ref, watch } from 'vue'
 import { store } from '../store.js'
 import { api } from '../api.js'
@@ -16,7 +15,8 @@ export const PLAY_MODES = [
   { id: 'next', label: 'lesson.modeNext', title: 'lesson.modeNextHint' }
 ]
 
-const MODE_KEY = 'offlineu.playMode'
+const MODE_KEY = 'offlineu.playMode'          // browser player
+const CAST_MODE_KEY = 'offlineu.castPlayMode' // cast on a TV
 // Old releases stored a plain "autoplay next" checkbox; a choice made there is
 // honoured once and then replaced by the three mode values.
 const LEGACY_AUTOPLAY_KEY = 'offlineu.autoplayNext'
@@ -44,22 +44,23 @@ export function normalizePlayMode(value) {
   return value === 'loop' || value === 'next' ? value : 'once'
 }
 
-function readPlayMode() {
-  const stored = readPreference(MODE_KEY, '')
+function readMode(key, legacyKey) {
+  const stored = readPreference(key, '')
   if (stored === 'loop' || stored === 'once' || stored === 'next') return stored
-  const legacy = readPreference(LEGACY_AUTOPLAY_KEY, '')
-  if (legacy === '1') return 'next'
-  if (legacy === '0') return 'once'
+  if (legacyKey) {
+    const legacy = readPreference(legacyKey, '')
+    if (legacy === '1') return 'next'
+    if (legacy === '0') return 'once'
+  }
   return 'once'
 }
 
-// A module level singleton (like the cast in useCast.js): every control reads
-// and writes this one ref, so the lesson page and the cast bar cannot drift
-// apart.
-export const playMode = ref(readPlayMode())
+// What the browser player does when a lesson ends.
+export const playMode = ref(readMode(MODE_KEY, LEGACY_AUTOPLAY_KEY))
+// What a cast on the TV does when the lesson it plays ends.
+export const castPlayMode = ref(readMode(CAST_MODE_KEY, null))
 
-// Adopt a mode without talking to the server: used when the value came from the
-// server in the first place.
+// Adopt a value without talking to the server (used for what the server reports).
 export function applyPlayMode(mode) {
   const next = normalizePlayMode(mode)
   playMode.value = next
@@ -67,8 +68,15 @@ export function applyPlayMode(mode) {
   return next
 }
 
-// The setting the server handed out wins: it is the global one, shared by every
-// browser, while the value in localStorage may be from another machine.
+export function applyCastPlayMode(mode) {
+  const next = normalizePlayMode(mode)
+  castPlayMode.value = next
+  writePreference(CAST_MODE_KEY, next)
+  return next
+}
+
+// The settings the server handed out win: they are the global ones, shared by
+// every browser, while the value in localStorage may be from another machine.
 watch(
   () => store.playMode,
   (mode) => {
@@ -77,19 +85,37 @@ watch(
   { immediate: true }
 )
 
-// Remember the choice - locally for the first paint and on the server, which is
-// where it becomes global. A cast that is running picks it up at the same time,
-// so switching 循环 / 连播 works while the TV is playing.
-export async function setPlayMode(mode, device) {
+watch(
+  () => store.castPlayMode,
+  (mode) => {
+    if (mode === 'loop' || mode === 'once' || mode === 'next') applyCastPlayMode(mode)
+  },
+  { immediate: true }
+)
+
+// The browser player's choice.
+export async function setPlayMode(mode) {
   const next = applyPlayMode(mode)
   try {
-    const payload = await api.setPlayMode(next, device)
-    if (payload && (payload.play_mode === 'loop' || payload.play_mode === 'once' || payload.play_mode === 'next')) {
-      applyPlayMode(payload.play_mode)
-      return payload
-    }
+    const payload = await api.setPlayMode(next)
+    if (payload && typeof payload.play_mode === 'string') applyPlayMode(payload.play_mode)
+    return payload || { play_mode: next }
   } catch {
     /* the server is unreachable: the local choice stands until it is back */
+    return { play_mode: next }
   }
-  return { play_mode: next }
+}
+
+// The cast's own choice - applied to the running cast at the same time, so
+// switching 循环 / 连播 works while the TV is playing.
+export async function setCastPlayMode(mode, device) {
+  const next = applyCastPlayMode(mode)
+  try {
+    const payload = await api.setCastPlayMode(next, device)
+    if (payload && typeof payload.cast_play_mode === 'string') applyCastPlayMode(payload.cast_play_mode)
+    return payload || { cast_play_mode: next }
+  } catch {
+    /* the server is unreachable: the local choice stands until it is back */
+    return { cast_play_mode: next }
+  }
 }
