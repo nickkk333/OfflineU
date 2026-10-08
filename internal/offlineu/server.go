@@ -46,7 +46,7 @@ func NewApp(cfg Config) *App {
 		Store:      store,
 		Progress:   &ProgressTracker{},
 		DLNA:       NewDLNAHub(),
-		Transcoder: NewTranscoder(),
+		Transcoder: NewTranscoder(cfg.CacheDir, cfg.CacheLimit, cfg.Transcode),
 	}
 }
 
@@ -99,6 +99,12 @@ func (a *App) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		a.handleDLNAControl(w, r)
 	case requestPath == "/api/settings":
 		a.handleSettings(w, r)
+	case requestPath == "/api/media/status":
+		a.handleMediaStatus(w, r)
+	case requestPath == "/api/hls/playlist" || requestPath == "/api/hls/playlist.m3u8":
+		a.handleHLSPlaylist(w, r)
+	case requestPath == "/api/hls/segment":
+		a.handleHLSSegment(w, r)
 	case requestPath == "/reset_course":
 		a.handleResetCourse(w, r)
 	case requestPath == "/forget_course":
@@ -1297,6 +1303,178 @@ func serveCourseFile(w http.ResponseWriter, r *http.Request, full, mime string) 
 	}
 	w.Header().Set("Content-Type", mime)
 	http.ServeContent(w, r, filepath.Base(full), info.ModTime(), handle)
+}
+
+// mediaStatus is how the browser is told to play one lesson:
+//
+//	direct  the file already sits in a container the browser plays; /files/ is
+//	        all that is needed
+//	hls     the lesson is streamed in short pieces (see hls.go) - one piece is
+//	        converted per request, so playback starts right away
+//	remux   the whole file is being repackaged in the background; ready turns
+//	        true when /files/ can serve the finished copy
+//	raw     nothing can be done for it - the bytes are served as they are
+type mediaStatus struct {
+	Mode      string  `json:"mode"`
+	Ready     bool    `json:"ready"`
+	Preparing bool    `json:"preparing"`
+	HLSURL    string  `json:"hls_url,omitempty"`
+	Error     string  `json:"error,omitempty"`
+	Duration  float64 `json:"duration,omitempty"`
+}
+
+// handleMediaStatus decides how a lesson has to be played and starts whatever
+// has to be prepared for it. It only ever answers from the cached probe - the
+// expensive work (reading the keyframes, repackaging the file) runs in the
+// background so the request comes back immediately.
+func (a *App) handleMediaStatus(w http.ResponseWriter, r *http.Request) {
+	if !requireMethod(w, r, http.MethodGet) {
+		return
+	}
+	course := a.ActiveCourse()
+	if course == nil {
+		writeError(w, http.StatusNotFound, "no course loaded")
+		return
+	}
+	requested := strings.TrimSpace(r.URL.Query().Get("path"))
+	lesson := FindLessonInTree(course.Root, requested)
+	if lesson == nil {
+		writeError(w, http.StatusNotFound, "lesson not found")
+		return
+	}
+	file := a.mediaFileFor(course, lesson)
+	if file == "" {
+		writeError(w, http.StatusNotFound, "this lesson has no media")
+		return
+	}
+
+	status := mediaStatus{Mode: "raw", Ready: true}
+	if a.Transcoder != nil {
+		a.Transcoder.ensureFFmpeg()
+		facts, err := a.Transcoder.Inspect(r.Context(), file)
+		switch {
+		case err != nil || facts.Container == "":
+			status.Mode = "raw"
+		case browserFriendlyContainer(facts.Container):
+			status.Mode = "direct"
+		case !a.Transcoder.Available():
+			status.Mode = "raw"
+		case r.URL.Query().Get("hls") != "0" && a.Transcoder.CanStreamHLS(r.Context(), file):
+			status.Mode = "hls"
+			status.HLSURL = "/api/hls/playlist.m3u8?lesson=" + url.QueryEscape(requested)
+			status.Duration = facts.Info.Duration
+			// Build the segment plan now, so the first request for the
+			// playlist does not have to wait for it.
+			a.Transcoder.EnsureHLSIndex(file)
+		default:
+			// Audio lessons, files of unknown length and files whose video
+			// would have to be re-encoded are repackaged as one MP4 instead.
+			status.Mode = "remux"
+			status.Duration = facts.Info.Duration
+			if _, ready := a.Transcoder.BrowserCacheReady(file); ready {
+				status.Ready = true
+			} else {
+				a.Transcoder.StartBrowserCache(file, facts.Info)
+				status.Preparing = true
+				if failure := a.Transcoder.BrowserCacheFailure(file); failure != nil {
+					status.Preparing = false
+					status.Error = failure.Error()
+				}
+			}
+		}
+	}
+	writeJSON(w, http.StatusOK, status)
+}
+
+// handleHLSPlaylist serves the media playlist of a lesson: the list of pieces
+// the browser may ask for.
+func (a *App) handleHLSPlaylist(w http.ResponseWriter, r *http.Request) {
+	if !requireMethod(w, r, http.MethodGet) {
+		return
+	}
+	course := a.ActiveCourse()
+	if course == nil {
+		writeError(w, http.StatusNotFound, "no course loaded")
+		return
+	}
+	requested := strings.TrimSpace(r.URL.Query().Get("lesson"))
+	lesson := FindLessonInTree(course.Root, requested)
+	if lesson == nil {
+		writeError(w, http.StatusNotFound, "lesson not found")
+		return
+	}
+	file := a.mediaFileFor(course, lesson)
+	if file == "" {
+		writeError(w, http.StatusNotFound, "this lesson has no media")
+		return
+	}
+	if a.Transcoder == nil || !a.Transcoder.Available() {
+		writeError(w, http.StatusNotImplemented, "ffmpeg is not installed, so this file cannot be converted")
+		return
+	}
+	lessonParam := url.QueryEscape(requested)
+	body, err := a.Transcoder.HLSPlaylist(r.Context(), file, func(index int) string {
+		return "/api/hls/segment?lesson=" + lessonParam + "&i=" + strconv.Itoa(index)
+	})
+	if err != nil {
+		if errors.Is(err, ErrHLSNotReady) {
+			// The plan is still being built; the browser retries in a moment.
+			w.Header().Set("Retry-After", "2")
+			writeError(w, http.StatusServiceUnavailable, err.Error())
+			return
+		}
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	w.Header().Set("Content-Type", "application/vnd.apple.mpegurl")
+	w.Header().Set("Cache-Control", "no-store")
+	_, _ = w.Write([]byte(body))
+}
+
+// handleHLSSegment serves one piece of a lesson, converting it when it is not
+// cached yet.
+func (a *App) handleHLSSegment(w http.ResponseWriter, r *http.Request) {
+	if !requireMethod(w, r, http.MethodGet) {
+		return
+	}
+	course := a.ActiveCourse()
+	if course == nil {
+		writeError(w, http.StatusNotFound, "no course loaded")
+		return
+	}
+	requested := strings.TrimSpace(r.URL.Query().Get("lesson"))
+	lesson := FindLessonInTree(course.Root, requested)
+	if lesson == nil {
+		writeError(w, http.StatusNotFound, "lesson not found")
+		return
+	}
+	file := a.mediaFileFor(course, lesson)
+	if file == "" {
+		writeError(w, http.StatusNotFound, "this lesson has no media")
+		return
+	}
+	position, err := strconv.Atoi(strings.TrimSpace(r.URL.Query().Get("i")))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "the segment number is missing")
+		return
+	}
+	if a.Transcoder == nil || !a.Transcoder.Available() {
+		writeError(w, http.StatusNotImplemented, "ffmpeg is not installed, so this file cannot be converted")
+		return
+	}
+	segment, err := a.Transcoder.HLSSegment(r.Context(), file, position)
+	if err != nil {
+		if errors.Is(err, ErrHLSNotReady) {
+			w.Header().Set("Retry-After", "2")
+			writeError(w, http.StatusServiceUnavailable, err.Error())
+			return
+		}
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	// Keep the piece: it is what makes a rewatch or a jump back free.
+	a.Transcoder.trimmer().Touch(segment)
+	serveCourseFile(w, r, segment, mpegTSMime)
 }
 
 // handleSubtitle serves subtitles. By default it converts SRT (and friends) to

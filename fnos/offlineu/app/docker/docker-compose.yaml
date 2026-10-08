@@ -17,8 +17,25 @@ services:
       - OFFLINEU_PORT=${OFFLINEU_HTTP_PORT:-5000}
       - OFFLINEU_ROOTS=/courses
       - OFFLINEU_PROGRESS_DIR=/app/data
+      # Converted media (HLS segments, remuxed files). /tmp is the small system
+      # disk on a NAS, so keep it inside the app folder instead.
+      - OFFLINEU_CACHE_DIR=/app/cache
+      - OFFLINEU_CACHE_LIMIT_GB=20
+      # Re-encoding: cap at 720p (only shrinks), and pick whichever hardware
+      # encoder the machine has (NVENC / Quick Sync / VAAPI / AMF / V4L2 / RKMPP).
+      # - OFFLINEU_TRANSCODE_HEIGHT=720
+      # - OFFLINEU_HWACCEL=auto
       - TZ=${OFFLINEU_TZ:-Asia/Shanghai}
     volumes:
       - ${OFFLINEU_COURSES:-/mnt/offlineu/courses}:/courses:ro
       - ./data:/app/data
+      - ./cache:/app/cache
+    # 硬件转码（OFFLINEU_HWACCEL=auto 时）需要宿主机对应的设备节点：只启用真实存在
+    # 的那些，否则 Docker 会因设备不存在而拒绝启动。
+    # devices:
+    #   - /dev/dri:/dev/dri          # Intel / AMD / Rockchip 核显（VAAPI、QSV、RKMPP）
+    #   - /dev/video0:/dev/video0    # ARM V4L2（如树莓派）
+    #   - /dev/nvidia0:/dev/nvidia0  # NVIDIA（NVENC，还需 nvidiactl、nvidia-uvm）
+    #   - /dev/nvidiactl:/dev/nvidiactl
+    #   - /dev/nvidia-uvm:/dev/nvidia-uvm
     restart: unless-stopped

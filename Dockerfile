@@ -66,10 +66,11 @@ COPY docker/entrypoint.sh /entrypoint.sh
 #  - progress and the course list go to /app/data so course mounts stay read-only
 ENV OFFLINEU_ROOTS=/courses \
     OFFLINEU_PROGRESS_DIR=/app/data \
+    OFFLINEU_CACHE_DIR=/app/cache \
     OFFLINEU_HOST=0.0.0.0 \
     OFFLINEU_PORT=5000
 
-RUN mkdir -p /courses /app/data && chown -R offlineu:offlineu /app /courses
+RUN mkdir -p /courses /app/data /app/cache && chown -R offlineu:offlineu /app /courses
 
 # The same binary is installed twice:
 #   /app/offlineu      plain
@@ -97,9 +98,11 @@ RUN cp /app/offlineu /app/offlineu-cap \
 # container:
 #   /courses   your course library (mount it read-only)
 #   /app/data  progress + course list (must stay writable)
+#   /app/cache converted media (HLS segments, remuxed files) - map it onto a
+#              volume with room to spare, or the system disk fills up
 # Declaring them after the chown above lets the mapped folder inherit the offlineu
 # ownership instead of turning up root-owned.
-VOLUME ["/courses", "/app/data"]
+VOLUME ["/courses", "/app/data", "/app/cache"]
 
 LABEL org.opencontainers.image.title="OfflineU" \
       org.opencontainers.image.description="Self-hosted offline course viewer. Map your course folder to /courses (read-only) and keep /app/data writable for progress."

@@ -246,6 +246,9 @@ stays scriptable:
 | GET    | `/lesson/<lesson_path>`                 | Deep link into the SPA lesson view                              |
 | POST   | `/api/progress`                         | Partial update: `{"lesson_path", "completed", "progress_seconds"}` (omitted fields are left untouched) |
 | GET    | `/files/<path>`                         | Serve a file inside the active course                           |
+| GET    | `/api/media/status?path=<lesson>`  | How the browser should play this lesson: `{"mode":"direct"\|"hls"\|"remux"\|"raw", "ready", "preparing", "hls_url", "error", "duration"}` — `hls=0` asks it never to offer HLS |
+| GET    | `/api/hls/playlist.m3u8?lesson=<path>` | The media playlist of a lesson that is streamed in short pieces |
+| GET    | `/api/hls/segment?lesson=<path>&i=3` | One piece of that stream (MPEG-TS), converted on first request and cached |
 | GET    | `/subtitles/<path>`                     | Serve subtitles as WebVTT (converts SRT on the fly)             |
 | GET    | `/health`                               | `{"status": "healthy"}` (used by Docker health checks)          |
 | POST   | `/api/reset_course`                     | Back to the picker; the course stays in the recent list         |
@@ -265,6 +268,102 @@ stays scriptable:
 
 `GET /api/state` localises its `mount_hint` from the `Accept-Language` header (`zh*` → Chinese,
 anything else → English), so the SPA can switch languages without a server restart.
+
+---
+
+## 🎥 Playback (and why a big file no longer stutters)
+
+A lesson is played one of four ways, decided per file by `/api/media/status`:
+
+| Mode    | When                                                          | Cost                                  |
+| ------- | ------------------------------------------------------------- | ------------------------------------- |
+| direct  | the file really is an MP4/M4V/MOV/WebM/Ogg (extension can lie) | nothing — served with Range support   |
+| hls     | the container or a codec is not browser-native, and the length is known | **one 6-second piece per request** |
+| remux   | audio lessons, files of unknown length, or no ffprobe          | the file is repackaged once, in the background |
+| raw     | no ffmpeg available                                            | the bytes are handed over as they are |
+
+The difference matters most on a low powered machine (a mini PC turned into a
+fnOS/飞牛OS NAS, say). Before, a file the browser could not play was *repackaged
+from start to end before the first byte reached the player* — gigabytes read and
+written while the player waited, plus a full re-encode when the codecs were
+exotic, which no weak CPU can do in real time. Now:
+
+* **HLS** cuts the lesson into ~6-second pieces whose boundaries sit on
+  keyframes, and the browser asks only for the pieces it is about to play.
+  Starting costs one piece, jumping into the middle costs one piece, and the
+  video stream is **copied** (`-c copy`) whenever it is already H.264 — demuxing
+  and muxing only, a fraction of one core. Only a stream the browser cannot
+  decode (HEVC, VP9, DTS, …) is re-encoded, and only that stream: H.264 video
+  with DTS audio keeps its video.
+* **Every probe is cached.** Reading a container means demuxing the file, and a
+  browser asks for the same lesson again and again while it seeks. The result is
+  remembered until the file changes (size + modification time), so what used to
+  be one ffprobe process per request is one per file.
+* **Nothing blocks on a conversion.** A whole-file remux runs in the background,
+  the page says *preparing* and starts playing when the copy is there.
+* **Pieces are cached on disk** and reused, so a rewatch (or a jump back) is free.
+
+Two settings matter on a small NAS:
+
+```yaml
+environment:
+  # Where the converted pieces go. The default is the system temp folder, which
+  # on a NAS is often the small system disk - put it on a big volume instead.
+  - OFFLINEU_CACHE_DIR=/app/cache
+  # Oldest file first, so it can never fill the disk (default 20 GiB).
+  - OFFLINEU_CACHE_LIMIT_GB=20
+volumes:
+  - ./cache:/app/cache
+```
+
+### When a stream really has to be re-encoded
+
+Copying costs almost nothing; re-encoding is where a weak machine gives up, so
+two things keep it affordable:
+
+* **720p cap** — a video that has to be re-encoded is scaled down to
+  `OFFLINEU_TRANSCODE_HEIGHT` (720 by default). The cap only ever shrinks: a
+  1080p lesson becomes 720p, a 720p lesson stays 720p and a 480p lesson stays
+  480p. `OFFLINEU_TRANSCODE_HEIGHT=0` keeps the source size,
+  `OFFLINEU_TRANSCODE_PRESET=ultrafast` trades quality for frames on a very
+  slow CPU.
+* **Hardware encoding** — with `OFFLINEU_HWACCEL=auto` (the default) OfflineU
+  asks ffmpeg once which hardware encoders it carries, checks that the device is
+  really there, and uses the first one that answers for both decoding and
+  encoding:
+
+  | Backend | Encoder | Decoder | Where | Needs |
+  | ------- | ------- | ------- | ----- | ----- |
+  | VideoToolbox | `h264_videotoolbox` | `videotoolbox` | macOS | — |
+  | NVENC | `h264_nvenc` | `cuda` | Linux, Windows | `/dev/nvidia*` |
+  | Quick Sync | `h264_qsv` | `qsv` | Linux, Windows | `/dev/dri` |
+  | VAAPI | `h264_vaapi` | `vaapi` | Linux | `/dev/dri/renderD*` |
+  | AMF | `h264_amf` | `d3d11va` | Windows, Linux | `/dev/kfd` on Linux |
+  | V4L2 M2M | `h264_v4l2m2m` | `v4l2m2m` | Linux (ARM, Raspberry Pi) | `/dev/video*` |
+  | RKMPP | `h264_rkmpp` | `rkmpp` | Linux (Rockchip) | `/dev/dri` or `/dev/mpp_service` |
+
+  The decoder is a bonus, never a requirement: a build that lists the encoder
+  but not the decoder still offloads the expensive half. Streams that are copied
+  are never touched by any of this. If a hardware run fails — a driver that
+  cannot allocate, an encoder that refuses the pixel format — the GPU is
+  switched off and the same conversion is retried with libx264, so no driver can
+  make a lesson unplayable. `OFFLINEU_HWACCEL=off` disables the probe; any of
+  the names above (or `cuda`, `nvidia`, `vt`, `v4l2`, `rockchip`) forces one.
+
+In Docker the GPU is only visible when the container is given its device nodes:
+
+```yaml
+    devices:
+      - /dev/dri:/dev/dri      # Intel / AMD / Rockchip iGPU (VAAPI, QSV, RKMPP)
+      # - /dev/nvidia0:/dev/nvidia0   # NVIDIA (NVENC) - plus nvidiactl, nvidia-uvm
+      # - /dev/video0:/dev/video0     # ARM V4L2 memory-to-memory
+```
+
+If your material is mostly HEVC/4K and even one piece takes too long to convert,
+the cheapest fix is still to transcode the library once on a real computer
+(`ffmpeg -i in.mkv -c:v libx264 -crf 23 -preset fast -c:a aac -movflags
++faststart out.mp4`), or to cast the lesson to a TV or player and let *it*
+decode — the server then only repackages, never re-encodes.
 
 ---
 
@@ -967,6 +1066,12 @@ Environment variables:
 | `OFFLINEU_DLNA`         | `off` (or `0`/`false`) hides casting and refuses the `/api/dlna/*` endpoints; anything else leaves it on |
 | `OFFLINEU_FFMPEG`       | Path of ffmpeg — lets casting convert a file a device would refuse (`.mkv`, HEVC, …). Falls back to `ffmpeg` on `PATH` |
 | `OFFLINEU_FFPROBE`      | Path of ffprobe; defaults to the binary next to `OFFLINEU_FFMPEG` |
+| `OFFLINEU_CACHE_DIR`    | Where converted media is written (remuxed MP4s, HLS segments). Defaults to the system temp folder — **point it at a large volume on a NAS**, see 🎥 Playback below |
+| `OFFLINEU_CACHE_LIMIT_GB` | How much disk that folder may use, oldest file first (default `20`; negative = no limit) |
+| `OFFLINEU_TRANSCODE_HEIGHT` | Height a re-encoded video is scaled **down** to (default `720`). Never scales up, never goes below 720p — a 480p source stays 480p. `0` keeps the source size |
+| `OFFLINEU_TRANSCODE_PRESET` | libx264 speed setting (default `veryfast`; `ultrafast` for a really weak CPU) |
+| `OFFLINEU_TRANSCODE_CRF` | Quality factor, also used as the quantiser of the hardware encoders (default `23`) |
+| `OFFLINEU_HWACCEL` | `auto` (default) uses the GPU when ffmpeg offers one — NVENC, Quick Sync, VAAPI, VideoToolbox, AMF, V4L2 or RKMPP; `off` never; or one name to force it (`nvenc`, `qsv`, `vaapi`, `videotoolbox`, `amf`, `v4l2m2m`, `rkmpp`) |
 | `AUTO_LOAD_COURSE`      | Load this course at startup when no path argument is given                  |
 
 Locations inside a configured root are shown **relative to the folder you mapped in**

@@ -38,6 +38,12 @@ export const api = {
     request('/api/forget_course', { method: 'POST', body: JSON.stringify({ path }) }),
   lesson: (lessonPath, autoplay) =>
     request(`/api/lesson?path=${encodeURIComponent(lessonPath)}${autoplay ? '&autoplay=1' : ''}`),
+  // How the browser is meant to play this lesson: "direct" (the file as it is),
+  // "hls" (streamed in short pieces), "remux" (the whole file is being
+  // repackaged in the background - poll until ready) or "raw" (nothing can be
+  // done for it). hls=false asks the server not to use HLS.
+  mediaStatus: (lessonPath, hls = true) =>
+    request(`/api/media/status?path=${encodeURIComponent(lessonPath)}${hls ? '' : '&hls=0'}`),
   saveProgress: (lessonPath, { completed, seconds } = {}) => {
     const payload = { lesson_path: lessonPath }
     if (typeof completed === 'boolean') payload.completed = completed

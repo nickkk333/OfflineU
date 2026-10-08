@@ -71,6 +71,10 @@ type MediaInfo struct {
 	VideoCodec string  `json:"video_codec,omitempty"`
 	AudioCodec string  `json:"audio_codec,omitempty"`
 	Duration   float64 `json:"duration,omitempty"` // seconds, 0 when unknown
+	// Size of the video stream. Height is what decides whether a lesson has to
+	// be scaled down before it is re-encoded; 0 means "not read".
+	Width  int `json:"width,omitempty"`
+	Height int `json:"height,omitempty"`
 }
 
 // HasVideo reports whether the file carries a video stream.
@@ -84,22 +88,83 @@ type CastPlan struct {
 	Reason             string `json:"reason,omitempty"`
 }
 
+// Defaults of the re-encoding profile. 720p is the floor: a lesson is scaled
+// *down* to it, never up to it, and never below it - a 480p source stays 480p.
+const (
+	DefaultTranscodeHeight = 720
+	DefaultTranscodePreset = "veryfast"
+	DefaultTranscodeCRF    = 23
+)
+
+// TranscodeOptions tunes what happens to a lesson whose streams cannot simply
+// be copied - the expensive case, and the one a low powered NAS cannot afford
+// at full size.
+type TranscodeOptions struct {
+	// MaxHeight caps the height a re-encoded video is scaled down to. 720 never
+	// upscales and never goes below 720p: a lesson that is already 720p or
+	// smaller keeps its size. 0 disables the cap.
+	MaxHeight int
+	// Preset is libx264's speed/quality trade-off ("ultrafast" … "veryslow").
+	Preset string
+	// CRF is libx264's constant quality factor (lower is better and slower);
+	// it is reused as the quantiser of the hardware encoders.
+	CRF int
+	// HWAccel is "auto" (use the GPU when ffmpeg offers one), "off", "vaapi" or
+	// "qsv".
+	HWAccel string
+}
+
 // Transcoder wraps the optional ffmpeg installation.
 type Transcoder struct {
 	ffmpeg   string
 	ffprobe  string
-	cacheDir string // remuxed MP4s for local browser playback
+	cacheDir string // remuxed MP4s and HLS segments for local browser playback
+
+	// How a lesson that has to be re-encoded is scaled and encoded.
+	MaxHeight int
+	Preset    string
+	CRF       int
+	hwMode    string
+
+	// initMu guards the lazily created helpers below: a transcoder built by
+	// hand (tests) starts without them and gets them on first use.
+	initMu sync.Mutex
+	// dirMu guards cacheDir.
+	dirMu      sync.Mutex
+	trim       *cacheTrimmer // keeps the cache inside its budget
+	probe      *probeCache   // remembers what a probe already told us
+	jobs       *jobRegistry  // never run the same conversion twice
+	hlsMu      sync.Mutex
+	hlsIndexes map[string]hlsIndexEntry
+
+	hwMu       sync.Mutex
+	hw         *hwAccel // nil until the first look, then the answer
+	hwResolved bool
 
 	autoMu   sync.Mutex
 	autoDone bool // auto-download attempted at most once
 }
 
 // NewTranscoder looks for ffmpeg/ffprobe: OFFLINEU_FFMPEG and OFFLINEU_FFPROBE
-// win, otherwise the two are searched on PATH.
-func NewTranscoder() *Transcoder {
+// win, otherwise the two are searched on PATH. cacheDir is where converted
+// media is kept ("" falls back to the system temp directory); limitBytes is the
+// budget that folder may use (0 keeps the default, a negative value disables
+// trimming).
+func NewTranscoder(cacheDir string, limitBytes int64, options TranscodeOptions) *Transcoder {
 	transcoder := &Transcoder{
-		ffmpeg:  findBinary(EnvFFmpeg, "ffmpeg"),
-		ffprobe: findBinary(EnvFFprobe, "ffprobe"),
+		ffmpeg:    findBinary(EnvFFmpeg, "ffmpeg"),
+		ffprobe:   findBinary(EnvFFprobe, "ffprobe"),
+		cacheDir:  cacheDir,
+		MaxHeight: options.MaxHeight,
+		Preset:    options.Preset,
+		CRF:       options.CRF,
+		hwMode:    strings.ToLower(strings.TrimSpace(options.HWAccel)),
+	}
+	if transcoder.hwMode == "" {
+		transcoder.hwMode = hwAuto
+	}
+	if limitBytes == 0 {
+		limitBytes = DefaultCacheLimitBytes
 	}
 	// A single statically linked ffmpeg is often dropped somewhere without its
 	// sibling: look next to it before giving up on probing.
@@ -109,15 +174,89 @@ func NewTranscoder() *Transcoder {
 			transcoder.ffprobe = candidate
 		}
 	}
-	// Remuxed MP4s for local playback are kept here between requests (and across
-	// restarts) so a lesson is only transcoded once and seeking reuses the file.
-	transcoder.cacheDir = filepath.Join(os.TempDir(), "offlineu-browser-cache")
-	_ = os.MkdirAll(transcoder.cacheDir, 0o755)
+	transcoder.probe = newProbeCache()
+	transcoder.jobs = newJobRegistry()
+	transcoder.trim = newCacheTrimmer(transcoder.CacheDir(), limitBytes)
 	return transcoder
+}
+
+// CacheDir is the folder converted media is written to. It is resolved lazily
+// so a transcoder built without one (tests, embedded use) still works.
+func (t *Transcoder) CacheDir() string {
+	t.dirMu.Lock()
+	defer t.dirMu.Unlock()
+	if t.cacheDir == "" {
+		t.cacheDir = defaultCacheDir()
+	}
+	return t.cacheDir
+}
+
+func defaultCacheDir() string {
+	dir := filepath.Join(os.TempDir(), "offlineu-browser-cache")
+	_ = os.MkdirAll(dir, 0o755)
+	return dir
+}
+
+// helpers returns the probe cache, the job registry and the cache trimmer,
+// creating them on first use.
+func (t *Transcoder) helpers() (*probeCache, *jobRegistry, *cacheTrimmer) {
+	t.initMu.Lock()
+	defer t.initMu.Unlock()
+	if t.probe == nil {
+		t.probe = newProbeCache()
+	}
+	if t.jobs == nil {
+		t.jobs = newJobRegistry()
+	}
+	if t.trim == nil {
+		t.trim = newCacheTrimmer(t.cacheDirOrTemp(), DefaultCacheLimitBytes)
+	}
+	return t.probe, t.jobs, t.trim
+}
+
+// cacheDirOrTemp is CacheDir without taking the lock (called with initMu held).
+func (t *Transcoder) cacheDirOrTemp() string {
+	if t.cacheDir == "" {
+		t.cacheDir = defaultCacheDir()
+	}
+	return t.cacheDir
+}
+
+func (t *Transcoder) probes() *probeCache {
+	probe, _, _ := t.helpers()
+	return probe
+}
+
+func (t *Transcoder) registry() *jobRegistry {
+	_, jobs, _ := t.helpers()
+	return jobs
+}
+
+func (t *Transcoder) trimmer() *cacheTrimmer {
+	_, _, trim := t.helpers()
+	return trim
 }
 
 // Available reports whether casting can fall back to a converted stream.
 func (t *Transcoder) Available() bool { return t != nil && t.ffmpeg != "" }
+
+// preset is the libx264 speed/quality trade-off in use. Faster presets are what
+// a weak CPU needs; "ultrafast" costs quality, "medium" costs frames.
+func (t *Transcoder) preset() string {
+	if value := strings.TrimSpace(t.Preset); value != "" {
+		return value
+	}
+	return "veryfast"
+}
+
+// quality is the constant quality factor a re-encoded stream is written with
+// (and the quantiser the hardware encoders get).
+func (t *Transcoder) quality() int {
+	if t.CRF < 12 || t.CRF > 35 {
+		return 23
+	}
+	return t.CRF
+}
 
 func findBinary(envKey, name string) string {
 	if configured := strings.TrimSpace(os.Getenv(envKey)); configured != "" {
@@ -140,37 +279,82 @@ func executableSuffix() string {
 // Probe reads the codecs and the duration of a media file. ffprobe is the first
 // choice; a lone ffmpeg binary (no ffprobe next to it) is asked to print the
 // same facts with "-i", so a cast still knows when a lesson ends.
+//
+// The answer is remembered until the file changes: probing means demuxing it,
+// and a browser asks for the same lesson again and again while it seeks.
 func (t *Transcoder) Probe(ctx context.Context, file string) (MediaInfo, error) {
+	facts, err := t.Inspect(ctx, file)
+	if err != nil {
+		return MediaInfo{}, err
+	}
+	return facts.Info, nil
+}
+
+// Inspect reports the real container of a file and the streams inside it. One
+// ffprobe run answers both, and the result is cached until the file changes on
+// disk (size + modification time), so a lesson is read at most once.
+func (t *Transcoder) Inspect(ctx context.Context, file string) (fileFacts, error) {
 	if !t.Available() {
-		return MediaInfo{}, errors.New("ffmpeg is not installed")
+		return fileFacts{}, errors.New("ffmpeg is not installed")
 	}
-	if t.ffprobe == "" {
-		info := t.probeWithFFmpeg(ctx, file)
-		if info.VideoCodec == "" && info.AudioCodec == "" && info.Duration <= 0 {
-			return MediaInfo{}, errors.New("ffprobe is not installed and ffmpeg could not read the file")
+	stat, err := os.Stat(file)
+	if err != nil {
+		return fileFacts{}, err
+	}
+	key := filepath.Clean(file)
+	cache := t.probes()
+	if facts, cachedErr, ok := cache.get(key, stat.Size(), stat.ModTime()); ok {
+		return facts, cachedErr
+	}
+	facts, err := t.inspect(ctx, file)
+	// A failure is only remembered while ffmpeg is actually there: on a runtime
+	// that downloads ffmpeg on demand the first answer would otherwise be
+	// "cannot read this file" forever.
+	if err != nil && !t.Available() {
+		return facts, err
+	}
+	cache.put(key, stat.Size(), stat.ModTime(), facts, err)
+	return facts, err
+}
+
+// inspect runs the probe itself: ffprobe first, "ffmpeg -i" when there is none.
+func (t *Transcoder) inspect(ctx context.Context, file string) (fileFacts, error) {
+	if t.ffprobe != "" {
+		if facts, err := t.probeWithFFprobe(ctx, file); err == nil {
+			return facts, nil
 		}
-		return info, nil
 	}
-	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	// No ffprobe, or a file it refuses: ffmpeg prints the same facts in its
+	// header before it complains about the missing output file.
+	return t.inspectWithFFmpeg(ctx, file)
+}
+
+// probeWithFFprobe reads the streams, the duration and the container from a
+// single ffprobe run.
+func (t *Transcoder) probeWithFFprobe(ctx context.Context, file string) (fileFacts, error) {
+	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
 	output, err := exec.CommandContext(ctx, t.ffprobe,
 		"-v", "quiet", "-print_format", "json", "-show_streams", "-show_format", file).Output()
 	if err != nil {
-		return MediaInfo{}, fmt.Errorf("ffprobe failed: %w", err)
+		return fileFacts{}, fmt.Errorf("ffprobe failed: %w", err)
 	}
 	var payload struct {
 		Streams []struct {
 			CodecType string `json:"codec_type"`
 			CodecName string `json:"codec_name"`
+			Width     int    `json:"width"`
+			Height    int    `json:"height"`
 		} `json:"streams"`
 		Format struct {
-			Duration string `json:"duration"`
+			Duration   string `json:"duration"`
+			FormatName string `json:"format_name"`
 		} `json:"format"`
 	}
 	if err := json.Unmarshal(output, &payload); err != nil {
-		return MediaInfo{}, fmt.Errorf("cannot read the ffprobe output: %w", err)
+		return fileFacts{}, fmt.Errorf("cannot read the ffprobe output: %w", err)
 	}
-	info := MediaInfo{}
+	facts := fileFacts{Container: strings.ToLower(strings.TrimSpace(payload.Format.FormatName))}
 	for _, stream := range payload.Streams {
 		name := strings.ToLower(strings.TrimSpace(stream.CodecName))
 		if name == "" {
@@ -178,26 +362,48 @@ func (t *Transcoder) Probe(ctx context.Context, file string) (MediaInfo, error) 
 		}
 		switch stream.CodecType {
 		case "video":
-			if info.VideoCodec == "" {
-				info.VideoCodec = name
+			if facts.Info.VideoCodec == "" {
+				facts.Info.VideoCodec = name
+				facts.Info.Width = stream.Width
+				facts.Info.Height = stream.Height
 			}
 		case "audio":
-			if info.AudioCodec == "" {
-				info.AudioCodec = name
+			if facts.Info.AudioCodec == "" {
+				facts.Info.AudioCodec = name
 			}
 		}
 	}
-	if info.VideoCodec == "" && info.AudioCodec == "" {
-		return MediaInfo{}, errors.New("no audio or video stream found")
+	if facts.Info.VideoCodec == "" && facts.Info.AudioCodec == "" {
+		return fileFacts{}, errors.New("no audio or video stream found")
 	}
-	info.Duration = parseDurationSeconds(payload.Format.Duration)
-	if info.Duration <= 0 {
+	facts.Info.Duration = parseDurationSeconds(payload.Format.Duration)
+	if facts.Info.Duration <= 0 {
 		// Some files carry no duration in the format section.
 		if fallback := t.probeWithFFmpeg(ctx, file); fallback.Duration > 0 {
-			info.Duration = fallback.Duration
+			facts.Info.Duration = fallback.Duration
 		}
 	}
-	return info, nil
+	return facts, nil
+}
+
+// inspectWithFFmpeg reads the same facts out of "ffmpeg -i".
+func (t *Transcoder) inspectWithFFmpeg(ctx context.Context, file string) (fileFacts, error) {
+	if !t.Available() {
+		return fileFacts{}, errors.New("ffmpeg is not installed")
+	}
+	timeout, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	output, _ := exec.CommandContext(timeout, t.ffmpeg, "-hide_banner", "-nostdin", "-i", file).CombinedOutput()
+	text := string(output)
+	info := parseFFmpegHeader(text)
+	container := ""
+	if match := ffmpegInputFormatPattern.FindStringSubmatch(text); match != nil {
+		container = strings.ToLower(strings.TrimSpace(match[1]))
+	}
+	if info.VideoCodec == "" && info.AudioCodec == "" && container == "" {
+		return fileFacts{}, errors.New("ffprobe is not installed and ffmpeg could not read the file")
+	}
+	return fileFacts{Container: container, Info: info}, nil
 }
 
 // probeWithFFmpeg asks ffmpeg itself what is inside the file. Without an output
@@ -219,6 +425,9 @@ var (
 	// ffmpeg -i prints "Input #0, <format>, from 'file':" on its diagnostics
 	// stream; this lets OfflineU read the real container without ffprobe.
 	ffmpegInputFormatPattern = regexp.MustCompile(`Input #0, ([^,]+),`)
+	// The video line carries the frame size right after the pixel format:
+	// "Video: h264 (High), yuv420p(progressive), 1920x1080, 25 fps".
+	ffmpegVideoSizePattern = regexp.MustCompile(`Video:[^\n]*?(\d{2,5})x(\d{2,5})`)
 )
 
 // parseFFmpegHeader lifts the codecs and the duration out of "ffmpeg -i".
@@ -236,6 +445,10 @@ func parseFFmpegHeader(output string) MediaInfo {
 				info.AudioCodec = codec
 			}
 		}
+	}
+	if match := ffmpegVideoSizePattern.FindStringSubmatch(output); match != nil {
+		info.Width, _ = strconv.Atoi(match[1])
+		info.Height, _ = strconv.Atoi(match[2])
 	}
 	if match := ffmpegDurationPattern.FindStringSubmatch(output); match != nil {
 		hours, _ := strconv.Atoi(match[1])
@@ -312,7 +525,12 @@ func (t *Transcoder) Args(file string, info MediaInfo, startSeconds int) ([]stri
 	if !t.Available() {
 		return nil, "", errors.New("ffmpeg is not installed")
 	}
+	copyVideo := !info.HasVideo() || codecIn(info.VideoCodec, safeVideoCodecs)
+	copyAudio := info.AudioCodec == "" || codecIn(info.AudioCodec, safeAudioCodecs)
+
 	args := []string{"-hide_banner", "-loglevel", "error", "-nostdin"}
+	// Hardware decoding only pays off when a frame is actually re-encoded.
+	args = append(args, t.hwInputArgs(!copyVideo || !copyAudio)...)
 	if startSeconds > 0 {
 		args = append(args, "-ss", formatClockDuration(startSeconds))
 	}
@@ -320,9 +538,6 @@ func (t *Transcoder) Args(file string, info MediaInfo, startSeconds int) ([]stri
 	// Subtitles and attachments are dropped: MPEG-TS cannot carry most of them
 	// and a failed "-c copy" of an .ass track would abort the whole stream.
 	args = append(args, "-sn", "-dn", "-map_metadata", "-1")
-
-	copyVideo := !info.HasVideo() || codecIn(info.VideoCodec, safeVideoCodecs)
-	copyAudio := info.AudioCodec == "" || codecIn(info.AudioCodec, safeAudioCodecs)
 
 	if !info.HasVideo() {
 		// Pure audio: the target container decides what may be copied. ADTS
@@ -347,7 +562,7 @@ func (t *Transcoder) Args(file string, info MediaInfo, startSeconds int) ([]stri
 		// container is rewritten - a few percent of one CPU core.
 		args = append(args, "-c:v", "copy", "-c:a", "copy")
 	} else {
-		args = append(args, "-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p")
+		args = append(args, t.videoOutputArgs(info)...)
 		if copyAudio {
 			args = append(args, "-c:a", "copy")
 		} else {
@@ -477,44 +692,17 @@ func containerMime(format string) string {
 	return ""
 }
 
-// realContainer probes the actual container format of a file, independent of its
-// (possibly lying) extension. ffprobe is preferred; when it is absent (the
-// auto-downloaded static build ships only ffmpeg) OfflineU falls back to parsing
-// "ffmpeg -i". An empty result means the container could not be read, in which
-// case the caller serves the bytes as-is.
+// realContainer reports the actual container of a file, independent of its
+// (possibly lying) extension. It answers from the cached probe, so what used to
+// be one ffprobe process per request is now one per file. An empty result means
+// the container could not be read, in which case the caller serves the bytes
+// as-is.
 func (t *Transcoder) realContainer(ctx context.Context, file string) string {
-	if !t.Available() {
+	facts, err := t.Inspect(ctx, file)
+	if err != nil {
 		return ""
 	}
-	if t.ffprobe != "" {
-		ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
-		defer cancel()
-		output, err := exec.CommandContext(ctx, t.ffprobe,
-			"-v", "quiet", "-show_format", "-of", "json", file).Output()
-		if err == nil {
-			var payload struct {
-				Format struct {
-					FormatName string `json:"format_name"`
-				} `json:"format"`
-			}
-			if json.Unmarshal(output, &payload) == nil {
-				return strings.ToLower(payload.Format.FormatName)
-			}
-		}
-	}
-	return t.realContainerFFmpeg(ctx, file)
-}
-
-// realContainerFFmpeg reads the container from ffmpeg's "Input #0, <format>," line
-// when ffprobe is unavailable.
-func (t *Transcoder) realContainerFFmpeg(ctx context.Context, file string) string {
-	timeout, cancel := context.WithTimeout(ctx, 8*time.Second)
-	defer cancel()
-	output, _ := exec.CommandContext(timeout, t.ffmpeg, "-hide_banner", "-nostdin", "-i", file).CombinedOutput()
-	if match := ffmpegInputFormatPattern.FindStringSubmatch(string(output)); match != nil {
-		return strings.ToLower(strings.TrimSpace(match[1]))
-	}
-	return ""
+	return facts.Container
 }
 
 // browserFileArgs builds the ffmpeg command that writes a browser-native MP4
@@ -526,13 +714,15 @@ func (t *Transcoder) browserFileArgs(file string, info MediaInfo, outPath string
 	if !t.Available() {
 		return nil, errors.New("ffmpeg is not installed")
 	}
-	args := []string{"-hide_banner", "-loglevel", "error", "-nostdin", "-y", "-i", file}
+	copyVideo := !info.HasVideo() || codecIn(info.VideoCodec, safeVideoCodecs)
+	copyAudio := info.AudioCodec == "" || codecIn(info.AudioCodec, safeAudioCodecs)
+
+	args := []string{"-hide_banner", "-loglevel", "error", "-nostdin", "-y"}
+	args = append(args, t.hwInputArgs(!copyVideo || !copyAudio)...)
+	args = append(args, "-i", file)
 	// Subtitles and attachments are dropped: a failed "-c copy" of an .ass track
 	// would abort the whole job, and the browser cannot show them anyway.
 	args = append(args, "-sn", "-dn", "-map_metadata", "-1")
-
-	copyVideo := !info.HasVideo() || codecIn(info.VideoCodec, safeVideoCodecs)
-	copyAudio := info.AudioCodec == "" || codecIn(info.AudioCodec, safeAudioCodecs)
 
 	if !info.HasVideo() {
 		args = append(args, "-c:a", "aac", "-b:a", "192k")
@@ -546,7 +736,7 @@ func (t *Transcoder) browserFileArgs(file string, info MediaInfo, outPath string
 			args = append(args, "-bsf:a", "aac_adtstoasc")
 		}
 	} else {
-		args = append(args, "-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p")
+		args = append(args, t.videoOutputArgs(info)...)
 		if copyAudio {
 			args = append(args, "-c:a", "copy")
 			if info.AudioCodec == "aac" {
@@ -565,24 +755,64 @@ func (t *Transcoder) browserFileArgs(file string, info MediaInfo, outPath string
 // share one job and a finished conversion is reused on the next play.
 func (t *Transcoder) browserCachePath(file string) string {
 	sum := sha1.Sum([]byte(filepath.Clean(file)))
-	return filepath.Join(t.cacheDir, fmt.Sprintf("%x.mp4", sum))
+	return filepath.Join(t.CacheDir(), browserCacheSubdir, fmt.Sprintf("%x.mp4", sum))
 }
 
-// ensureBrowserCache transcodes file into a browser-native MP4 (or reuses a
-// still-valid one) and returns that path. The cached file tracks the source's
-// modification time, so editing the lesson invalidates it automatically.
-func (t *Transcoder) ensureBrowserCache(r *http.Request, file string, info MediaInfo) (string, error) {
+// BrowserCacheReady reports the path of the remuxed MP4 and whether it is there
+// yet. The cached file tracks the source's modification time, so editing the
+// lesson invalidates it automatically.
+func (t *Transcoder) BrowserCacheReady(file string) (string, bool) {
 	cachePath := t.browserCachePath(file)
+	source, err := os.Stat(file)
+	if err != nil {
+		return cachePath, false
+	}
+	cached, err := os.Stat(cachePath)
+	if err != nil || cached.Size() == 0 || source.ModTime().After(cached.ModTime()) {
+		return cachePath, false
+	}
+	return cachePath, true
+}
+
+// StartBrowserCache converts file into a browser-native MP4 in the background,
+// unless that already happened or is running. Nothing waits for it: the browser
+// asks /api/media/status, is told that the lesson is being prepared and gets the
+// file as soon as BrowserCacheReady says it is there - which is what keeps a
+// multi gigabyte lesson from blocking the request (and the player) for minutes.
+func (t *Transcoder) StartBrowserCache(file string, info MediaInfo) {
+	if !t.Available() {
+		return
+	}
+	cachePath := t.browserCachePath(file)
+	t.registry().run("browser-cache:"+filepath.Clean(file), func() (string, error) {
+		return t.buildBrowserCache(file, info, cachePath)
+	})
+}
+
+// BrowserCacheFailure reports why the last background conversion of a file gave
+// up, so the UI can say so instead of waiting forever.
+func (t *Transcoder) BrowserCacheFailure(file string) error {
+	err, _ := t.registry().Failure("browser-cache:" + filepath.Clean(file))
+	return err
+}
+
+// buildBrowserCache runs the conversion itself.
+func (t *Transcoder) buildBrowserCache(file string, info MediaInfo, cachePath string) (string, error) {
 	source, err := os.Stat(file)
 	if err != nil {
 		return "", err
 	}
-	if cached, err := os.Stat(cachePath); err == nil && !source.ModTime().After(cached.ModTime()) {
+	if cached, err := os.Stat(cachePath); err == nil && cached.Size() > 0 &&
+		!source.ModTime().After(cached.ModTime()) {
 		return cachePath, nil
 	}
 	_ = os.Remove(cachePath)
 
-	tmp, err := os.CreateTemp(t.cacheDir, "browser-*.mp4.tmp")
+	dir := filepath.Dir(cachePath)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "", err
+	}
+	tmp, err := os.CreateTemp(dir, "browser-*.mp4.tmp")
 	if err != nil {
 		return "", err
 	}
@@ -595,19 +825,35 @@ func (t *Transcoder) ensureBrowserCache(r *http.Request, file string, info Media
 	if err != nil {
 		return "", err
 	}
-	command := exec.CommandContext(r.Context(), t.ffmpeg, args...)
+	// A whole lesson can take a long time on a slow machine; it runs detached
+	// from the request that started it.
+	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Hour)
+	defer cancel()
+	command := exec.CommandContext(ctx, t.ffmpeg, args...)
 	diagnostics := &limitedBuffer{limit: 4096}
 	command.Stderr = diagnostics
-	if err := command.Run(); err != nil {
+	if err := command.Run(); err != nil && t.hardware() != nil {
+		// The GPU could not do it: switch it off and redo the whole file with
+		// libx264 rather than leaving the lesson unplayable.
+		t.disableHardware()
+		if args, err = t.browserFileArgs(file, info, tmpName); err == nil {
+			command = exec.CommandContext(ctx, t.ffmpeg, args...)
+			command.Stderr = diagnostics
+			err = command.Run()
+		}
+	}
+	if err != nil {
 		message := strings.TrimSpace(diagnostics.String())
 		if message == "" {
 			message = err.Error()
 		}
+		logf("browser: remux failed for %s: %s", filepath.Base(file), message)
 		return "", fmt.Errorf("ffmpeg could not convert this file: %s", message)
 	}
 	if err := os.Rename(tmpName, cachePath); err != nil {
 		return "", err
 	}
+	t.trimmer().Trim()
 	return cachePath, nil
 }
 
@@ -661,7 +907,7 @@ func (t *Transcoder) installBundledFFmpeg() (string, string, bool) {
 	if len(ffmpegBytes) == 0 {
 		return "", "", false
 	}
-	dir := filepath.Join(t.cacheDir, "ffmpeg-bundled")
+	dir := filepath.Join(t.CacheDir(), "ffmpeg-bundled")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return "", "", false
 	}
@@ -793,28 +1039,31 @@ func downloadFile(url, dest string) error {
 // ServeBrowser adapts a media file to what a browser can actually play. Files
 // whose real container matches their extension (or is otherwise browser-native)
 // are served with the correct MIME; files in an unplayable container (MPEG-TS,
-// MKV, AVI, …) are repackaged to a seekable MP4 and served via http.ServeContent,
-// so the browser can both play from the start and seek. It returns true when it
-// wrote the response, false when the caller should fall back to serving the raw
-// bytes - which happens without ffmpeg, when the container is unreadable, or if
-// ffmpeg fails to convert the file.
+// MKV, AVI, …) are served from the remuxed MP4 when that copy is finished.
+//
+// It never starts a conversion: repackaging a whole lesson takes minutes on a
+// slow machine, and a request must not sit there waiting for it. /api/media/status
+// starts the job in the background and the browser comes back for the file once
+// it is ready (see StartBrowserCache and BrowserCacheReady). It returns true
+// when it wrote the response and false when the caller should serve the raw
+// bytes - without ffmpeg, when the container is unreadable, or while the copy is
+// still being made.
 func (t *Transcoder) ServeBrowser(w http.ResponseWriter, r *http.Request, file string) bool {
 	// Make sure ffmpeg is available before we decide anything; on a runtime that
 	// has none this downloads the static build for the current OS/arch (Windows,
 	// Linux amd64/arm64, macOS) - that is what lets an ARM NAS box like fnOS/飞牛OS
 	// repackage lessons for the browser without ffmpeg preinstalled.
 	t.ensureFFmpeg()
-	container := t.realContainer(r.Context(), file)
-	if container == "" {
+	// One cached probe answers the whole request: the container, the codecs and
+	// the duration come from the same ffprobe run.
+	facts, err := t.Inspect(r.Context(), file)
+	if err != nil || facts.Container == "" {
 		// Still unreadable even after ffmpeg is in place: give up and let the
 		// caller serve the raw bytes.
 		return false
 	}
-	if container == "" {
-		return false
-	}
-	if browserFriendlyContainer(container) {
-		if mime := containerMime(container); mime != "" {
+	if browserFriendlyContainer(facts.Container) {
+		if mime := containerMime(facts.Container); mime != "" {
 			serveCourseFile(w, r, file, mime)
 			return true
 		}
@@ -823,14 +1072,14 @@ func (t *Transcoder) ServeBrowser(w http.ResponseWriter, r *http.Request, file s
 	if !t.Available() {
 		return false
 	}
-	info, _ := t.Probe(r.Context(), file)
-	cachePath, err := t.ensureBrowserCache(r, file, info)
-	if err != nil {
-		logf("browser: remux failed for %s: %v", filepath.Base(file), err)
+	cachePath, ready := t.BrowserCacheReady(file)
+	if !ready {
 		return false
 	}
+	// Touch the copy so the cache trimmer throws away something else first.
+	t.trimmer().Touch(cachePath)
 	mime := "video/mp4"
-	if !info.HasVideo() {
+	if !facts.Info.HasVideo() {
 		mime = "audio/mp4"
 	}
 	serveCourseFile(w, r, cachePath, mime)

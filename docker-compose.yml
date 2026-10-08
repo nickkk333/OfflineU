@@ -13,6 +13,20 @@ services:
       # - OFFLINEU_ROOTS_LABEL=My courses
       # Keep progress files and the course list out of the (read-only) course folder.
       - OFFLINEU_PROGRESS_DIR=/app/data
+      # Where converted media (HLS segments, remuxed MP4s) is written. The default
+      # is the system temp folder, which on a NAS is usually the small system
+      # disk: point it at a big volume and map that volume below.
+      - OFFLINEU_CACHE_DIR=/app/cache
+      # Oldest file first, so the cache can never fill the disk (GiB).
+      - OFFLINEU_CACHE_LIMIT_GB=20
+      # Re-encoding a lesson: never more than 720p (it only shrinks - a 480p
+      # source stays 480p). 0 keeps the source size, "ultrafast" is the preset
+      # for a really weak CPU.
+      # - OFFLINEU_TRANSCODE_HEIGHT=720
+      # - OFFLINEU_TRANSCODE_PRESET=veryfast
+      # Hardware encoding: auto (default) picks NVENC / Quick Sync / VAAPI /
+      # AMF / V4L2 / RKMPP, off never asks, or name one to force it.
+      # - OFFLINEU_HWACCEL=auto
       # Optional: skip the picker and load a course at startup.
       # - AUTO_LOAD_COURSE=/courses/My Course
     volumes:
@@ -21,6 +35,18 @@ services:
       - ./courses:/courses:ro
       # Mount a local directory for user data/progress
       - ./data:/app/data
+      # Scratch space for converted media (see OFFLINEU_CACHE_DIR above)
+      - ./cache:/app/cache
+    # Hardware encoding (OFFLINEU_HWACCEL=auto, the default) needs the device
+    # nodes of the host. Uncomment the ones your machine has - a missing node
+    # makes Docker refuse to start, so only enable what exists. Without any of
+    # them OfflineU re-encodes in software, which still works, just slower.
+    # devices:
+    #   - /dev/dri:/dev/dri                  # Intel / AMD / Rockchip iGPU
+    #   - /dev/video0:/dev/video0            # ARM V4L2 memory-to-memory
+    #   - /dev/nvidia0:/dev/nvidia0          # NVIDIA NVENC
+    #   - /dev/nvidiactl:/dev/nvidiactl
+    #   - /dev/nvidia-uvm:/dev/nvidia-uvm
     # The container runs as uid 10001, but the image hands that uid the read
     # capability CAP_DAC_OVERRIDE: a mapped folder is readable even when it
     # belongs to root or to another NAS account, with no --privileged and no

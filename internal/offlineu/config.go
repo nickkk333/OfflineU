@@ -25,6 +25,24 @@ const (
 	EnvProgressDir = "OFFLINEU_PROGRESS_DIR"
 	EnvAutoCourse  = "AUTO_LOAD_COURSE"
 	EnvDLNA        = "OFFLINEU_DLNA"
+	// OFFLINEU_CACHE_DIR is where converted media (remuxed MP4s, HLS segments)
+	// is written. It defaults to the system temp directory, which on a NAS is
+	// usually the small system disk - point it at a big volume instead.
+	EnvCacheDir = "OFFLINEU_CACHE_DIR"
+	// OFFLINEU_CACHE_LIMIT_GB caps that folder, in GiB, oldest file first.
+	// 0 keeps the default; a negative value disables the cap.
+	EnvCacheLimit = "OFFLINEU_CACHE_LIMIT_GB"
+	// OFFLINEU_TRANSCODE_HEIGHT caps the height of a video that has to be
+	// re-encoded (default 720). It never scales anything up and never goes
+	// below 720p; 0 keeps the source size.
+	EnvTranscodeHeight = "OFFLINEU_TRANSCODE_HEIGHT"
+	// OFFLINEU_TRANSCODE_PRESET is libx264's speed setting (default veryfast).
+	EnvTranscodePreset = "OFFLINEU_TRANSCODE_PRESET"
+	// OFFLINEU_TRANSCODE_CRF is libx264's quality factor, reused as the
+	// quantiser of the hardware encoders (default 23).
+	EnvTranscodeCRF = "OFFLINEU_TRANSCODE_CRF"
+	// OFFLINEU_HWACCEL is "auto" (default), "off", "vaapi" or "qsv".
+	EnvHWAccel = "OFFLINEU_HWACCEL"
 )
 
 // Portable is empty for an ordinary build ("go build", "go run", the Docker
@@ -128,6 +146,49 @@ type Config struct {
 	ProgressDir string   // OFFLINEU_PROGRESS_DIR ("" keeps progress next to the course)
 	StateDir    string   // where offlineu_state.json lives
 	DLNAEnabled bool     // OFFLINEU_DLNA: look for cast devices on the LAN (default: on)
+	CacheDir    string   // OFFLINEU_CACHE_DIR ("" keeps the system temp directory)
+	CacheLimit  int64    // OFFLINEU_CACHE_LIMIT_GB in bytes (0 = default, <0 = unlimited)
+	Transcode   TranscodeOptions
+}
+
+// transcodeSettings reads how a lesson that has to be re-encoded is scaled and
+// encoded. The defaults are the ones a low powered NAS needs: never re-encode
+// more than 720p, and let the GPU do it when there is one.
+func transcodeSettings() TranscodeOptions {
+	options := TranscodeOptions{
+		MaxHeight: DefaultTranscodeHeight,
+		Preset:    strings.TrimSpace(os.Getenv(EnvTranscodePreset)),
+		CRF:       envIntOr(EnvTranscodeCRF, DefaultTranscodeCRF),
+		HWAccel:   strings.TrimSpace(os.Getenv(EnvHWAccel)),
+	}
+	if height := envIntOr(EnvTranscodeHeight, DefaultTranscodeHeight); height >= 0 {
+		options.MaxHeight = height
+	}
+	if options.Preset == "" {
+		options.Preset = DefaultTranscodePreset
+	}
+	return options
+}
+
+// cacheLimitBytes reads OFFLINEU_CACHE_LIMIT_GB: how much disk the converted
+// media may use, in GiB. An empty or unreadable value keeps the default and a
+// negative one disables the cap.
+func cacheLimitBytes() int64 {
+	raw := strings.TrimSpace(os.Getenv(EnvCacheLimit))
+	if raw == "" {
+		return DefaultCacheLimitBytes
+	}
+	gigabytes, err := strconv.ParseFloat(raw, 64)
+	if err != nil {
+		return DefaultCacheLimitBytes
+	}
+	if gigabytes < 0 {
+		return -1
+	}
+	if bytes := int64(gigabytes * 1024 * 1024 * 1024); bytes > 0 {
+		return bytes
+	}
+	return DefaultCacheLimitBytes
 }
 
 // ConfigFromEnv builds a Config from the OFFLINEU_* environment variables.
@@ -138,6 +199,9 @@ func ConfigFromEnv() Config {
 		RootLabel:   strings.TrimSpace(os.Getenv(EnvRootLabel)),
 		ProgressDir: strings.TrimSpace(os.Getenv(EnvProgressDir)),
 		DLNAEnabled: dlnaEnabled(),
+		CacheDir:    ExpandHome(strings.TrimSpace(os.Getenv(EnvCacheDir))),
+		CacheLimit:  cacheLimitBytes(),
+		Transcode:   transcodeSettings(),
 	}
 	cfg.RefreshRoots()
 	cfg.StateDir = deriveStateDir(cfg.ProgressDir)

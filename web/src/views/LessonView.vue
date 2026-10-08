@@ -47,6 +47,20 @@ const completed = ref(false)
 const mediaEl = ref(null)
 const playbackRate = ref(parseFloat(readPreference(RATE_KEY, '1')) || 1)
 
+// How the media of this lesson reaches the browser. A file the browser cannot
+// play as it is (an .mkv, or an .mp4 that is really an MPEG-TS stream) used to
+// be repackaged from start to end before the first frame appeared - on a slow
+// NAS that is minutes of waiting. Now the server answers with a plan: play the
+// file as it is, stream it in short pieces (HLS - one piece is converted per
+// request, so playback starts right away and jumping into the middle costs one
+// piece), or repackage it in the background while this page says so.
+const mediaStatus = ref(null)
+const mediaPreparing = ref(false)
+const mediaError = ref('')
+let hlsPlayer = null
+let hlsRetryTimer = 0
+let remuxTimer = 0
+
 // What the *browser player* does when the lesson ends: its own global setting
 // (see usePlayMode.js). The cast keeps a separate one, so this never changes
 // what the TV does - even while both are playing.
@@ -146,6 +160,13 @@ watch(
 
 const RATES = [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2]
 const isMedia = computed(() => Boolean(lesson.value && (lesson.value.video_file || lesson.value.audio_file)))
+// True while hls.js feeds the element: the <video> has no src of its own then.
+const streaming = computed(() => mediaStatus.value?.mode === 'hls' && !mediaError.value)
+// Nothing is loaded while the server is still repackaging, and nothing is
+// loaded through src while hls.js is in charge - otherwise the element would
+// fetch the raw file (and fail on it) behind the stream's back.
+const videoSrc = computed(() => (mediaPreparing.value || streaming.value ? '' : lesson.value?.video_src || ''))
+const audioSrc = computed(() => (mediaPreparing.value || streaming.value ? '' : lesson.value?.audio_src || ''))
 const positionLabel = computed(() =>
   payload.value ? `${payload.value.position + 1} / ${payload.value.total}` : ''
 )
@@ -202,6 +223,7 @@ async function load(path) {
     // resume position and - for autoplay - media.play() are skipped.
     loading.value = false
     await nextTick()
+    await prepareMedia()
     initialisePlayer()
     loadTextResources()
   } catch (cause) {
@@ -209,6 +231,149 @@ async function load(path) {
   } finally {
     loading.value = false
   }
+}
+
+// Asks the server how this lesson has to be played and sets the player up
+// accordingly. A failure is never fatal: the file is then played the old way.
+async function prepareMedia() {
+  destroyHls()
+  stopRemuxPoll()
+  hlsAttempts = 0
+  mediaStatus.value = null
+  mediaPreparing.value = false
+  mediaError.value = ''
+  if (!isMedia.value || !lesson.value) return
+  const path = lesson.value.rel_path
+  let status
+  try {
+    status = await api.mediaStatus(path)
+  } catch {
+    return // no answer: play the file as it is
+  }
+  mediaStatus.value = status
+  if (status.mode === 'hls' && status.hls_url) {
+    await attachHls(status.hls_url)
+    return
+  }
+  if (status.mode === 'remux') {
+    if (status.error) {
+      mediaError.value = status.error
+      return
+    }
+    if (!status.ready) {
+      // The server is repackaging the whole file; say so instead of letting
+      // the request hang until it is done.
+      mediaPreparing.value = true
+      startRemuxPoll(path)
+    }
+  }
+}
+
+// Polls until the repackaged copy is there. The conversion of a long lesson can
+// take minutes on a slow machine, and it runs once - the result is cached.
+function startRemuxPoll(path) {
+  let attempts = 0
+  const tick = async () => {
+    if (currentPath !== path) return // the reader moved on
+    try {
+      const status = await api.mediaStatus(path)
+      mediaStatus.value = status
+      if (status.ready || status.error) {
+        stopRemuxPoll()
+        mediaPreparing.value = false
+        if (status.error) {
+          mediaError.value = status.error
+          return
+        }
+        await nextTick()
+        initialisePlayer()
+        return
+      }
+    } catch {
+      /* the server is busy converting; keep waiting */
+    }
+    if (++attempts > 300) {
+      stopRemuxPoll()
+      mediaPreparing.value = false
+      mediaError.value = t('lesson.preparingSlow')
+      return
+    }
+    remuxTimer = window.setTimeout(tick, 2000)
+  }
+  remuxTimer = window.setTimeout(tick, 2000)
+}
+
+function stopRemuxPoll() {
+  if (remuxTimer) {
+    window.clearTimeout(remuxTimer)
+    remuxTimer = 0
+  }
+}
+
+// The first play of a long lesson has to wait for its segment plan (the server
+// reads the keyframes once, then caches them), so the manifest is given time and
+// a handful of retries before giving up.
+const HLS_RETRIES = 8
+let hlsAttempts = 0
+
+function stopHlsRetry() {
+  if (hlsRetryTimer) {
+    window.clearTimeout(hlsRetryTimer)
+    hlsRetryTimer = 0
+  }
+}
+
+async function attachHls(url) {
+  const media = mediaEl.value
+  if (!media) return
+  // Safari and iOS play HLS without help.
+  if (media.canPlayType('application/vnd.apple.mpegurl')) {
+    media.src = url
+    return
+  }
+  try {
+    const { default: Hls } = await import('hls.js')
+    if (!Hls.isSupported()) {
+      mediaStatus.value = { mode: 'direct' }
+      return
+    }
+    const player = new Hls({
+      enableWorker: true,
+      maxBufferLength: 30,
+      maxMaxBufferLength: 60,
+      manifestLoadTimeOut: 120000
+    })
+    player.loadSource(url)
+    player.attachMedia(media)
+    player.on(Hls.Events.ERROR, (_event, data) => {
+      if (!data || !data.fatal) return
+      destroyHls()
+      if (data.type === Hls.ErrorTypes.NETWORK_ERROR && hlsAttempts < HLS_RETRIES) {
+        // 503 while the plan is being built: try again in a moment.
+        hlsAttempts += 1
+        hlsRetryTimer = window.setTimeout(() => attachHls(url), 3000)
+        return
+      }
+      // Fall back to the plain file; the player will at least try it.
+      mediaStatus.value = { mode: 'direct' }
+      mediaError.value = ''
+      toast.error(t('toast.streamFailed'))
+    })
+    hlsPlayer = player
+  } catch {
+    mediaStatus.value = { mode: 'direct' }
+  }
+}
+
+function destroyHls() {
+  stopHlsRetry()
+  if (!hlsPlayer) return
+  try {
+    hlsPlayer.destroy()
+  } catch {
+    /* already gone */
+  }
+  hlsPlayer = null
 }
 
 function initialisePlayer() {
@@ -386,6 +551,8 @@ onMounted(() => {
 onBeforeUnmount(() => {
   window.removeEventListener('keydown', onKeydown)
   window.clearTimeout(advanceTimer)
+  stopRemuxPoll()
+  destroyHls()
 })
 </script>
 
@@ -490,6 +657,12 @@ onBeforeUnmount(() => {
           <span v-else-if="playMode === 'next'" class="faint">{{ t('lesson.lastLesson') }}</span>
         </div>
 
+        <div v-if="mediaPreparing" class="player-note">
+          <span class="spinner"></span>
+          {{ t('lesson.preparing') }}
+        </div>
+        <p v-else-if="mediaError" class="player-note player-note--error">{{ mediaError }}</p>
+
         <video
           v-if="lesson.video_file"
           ref="mediaEl"
@@ -497,7 +670,7 @@ onBeforeUnmount(() => {
           controls
           playsinline
           :preload="payload.requested_autoplay ? 'auto' : 'metadata'"
-          :src="lesson.video_src"
+          :src="videoSrc"
           @timeupdate="onTimeUpdate"
           @pause="onPause"
           @ended="onEnded"
@@ -519,7 +692,7 @@ onBeforeUnmount(() => {
           class="player player--audio"
           controls
           :preload="payload.requested_autoplay ? 'auto' : 'metadata'"
-          :src="lesson.audio_src"
+          :src="audioSrc"
           @timeupdate="onTimeUpdate"
           @pause="onPause"
           @ended="onEnded"
@@ -700,6 +873,24 @@ onBeforeUnmount(() => {
 .player--audio {
   background: rgba(8, 12, 22, 0.6);
   padding: 12px;
+}
+
+/* Shown instead of the player while the server converts the lesson. */
+.player-note {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  min-height: 120px;
+  padding: 24px;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius);
+  color: var(--text-muted, #8b95a8);
+  text-align: center;
+}
+
+.player-note--error {
+  color: var(--danger, #e2555f);
 }
 
 .resource {

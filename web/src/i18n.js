@@ -188,7 +188,9 @@ const en = {
     cannotPreview:
       'This file type cannot be previewed in the browser. Use the link below to open it with the matching desktop application.',
     openInNewTab: '📎 Open {name} in a new tab',
-    shortcuts: 'Shortcuts: space play/pause · ← → skip 10 s · ↑ ↓ volume'
+    shortcuts: 'Shortcuts: space play/pause · ← → skip 10 s · ↑ ↓ volume',
+    preparing: 'Preparing this lesson for the browser — it starts as soon as it is ready',
+    preparingSlow: 'This lesson is still being prepared. It will start playing once the conversion finishes.'
   },
   cast: {
     button: '📺 Cast',
@@ -231,6 +233,7 @@ const en = {
     autoplayBlocked: 'Autoplay was blocked by the browser — press play to continue',
     couldNotLoadFile: 'Could not load this file: {message}',
     markedCompleted: 'Lesson marked as completed',
+    streamFailed: 'Streaming failed — falling back to the file as it is',
     skipForward: 'Fast-forward 10 s',
     skipBack: 'Rewind 10 s',
     volume: 'Volume {percent}%',
@@ -410,7 +413,9 @@ const zh = {
     loadingResource: '加载中…',
     cannotPreview: '这种文件无法在浏览器中预览。请使用下面的链接，用对应的桌面应用打开它。',
     openInNewTab: '📎 在新标签页打开 {name}',
-    shortcuts: '快捷键：空格 播放/暂停 · ← → 快退/快进 10 秒 · ↑ ↓ 调节音量'
+    shortcuts: '快捷键：空格 播放/暂停 · ← → 快退/快进 10 秒 · ↑ ↓ 调节音量',
+    preparing: '正在为浏览器准备本节 —— 准备完成后立即开始播放',
+    preparingSlow: '本节仍在准备中，转换完成后会自动开始播放。'
   },
   cast: {
     button: '📺 投屏',
@@ -453,6 +458,7 @@ const zh = {
     autoplayBlocked: '浏览器阻止了自动播放 —— 请点击播放按钮继续',
     couldNotLoadFile: '无法加载该文件：{message}',
     markedCompleted: '已标记为完成',
+    streamFailed: '分片播放失败 —— 已回退为直接播放原文件',
     skipForward: '快进 10 秒',
     skipBack: '后退 10 秒',
     volume: '音量 {percent}%',
