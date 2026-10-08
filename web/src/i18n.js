@@ -190,7 +190,11 @@ const en = {
     openInNewTab: '📎 Open {name} in a new tab',
     shortcuts: 'Shortcuts: space play/pause · ← → skip 10 s · ↑ ↓ volume',
     preparing: 'Preparing this lesson for the browser — it starts as soon as it is ready',
-    preparingSlow: 'This lesson is still being prepared. It will start playing once the conversion finishes.'
+    preparingSlow: 'This lesson is still being prepared. It will start playing once the conversion finishes.',
+    suggestCastTitle: 'This video has to be converted to play in the browser',
+    suggestCastBody:
+      'The video track is {codec}, which browsers cannot decode, so the server has to re-encode it piece by piece — slow on a small machine. Cast the lesson instead: your TV or player decodes it itself. Turn compatibility mode off there to hand it the untouched file.',
+    suggestCastAction: '📺 Cast instead'
   },
   cast: {
     button: '📺 Cast',
@@ -415,7 +419,11 @@ const zh = {
     openInNewTab: '📎 在新标签页打开 {name}',
     shortcuts: '快捷键：空格 播放/暂停 · ← → 快退/快进 10 秒 · ↑ ↓ 调节音量',
     preparing: '正在为浏览器准备本节 —— 准备完成后立即开始播放',
-    preparingSlow: '本节仍在准备中，转换完成后会自动开始播放。'
+    preparingSlow: '本节仍在准备中，转换完成后会自动开始播放。',
+    suggestCastTitle: '本节需要在服务器端转码才能在浏览器播放',
+    suggestCastBody:
+      '视频轨是 {codec}，浏览器无法解码，只能由服务器逐片重新编码 —— 在性能较弱的机器上会很卡。建议改为投屏：由电视或播放器自己解码。投屏时关闭"兼容模式"，即可把原文件直接推给设备。',
+    suggestCastAction: '📺 改为投屏'
   },
   cast: {
     button: '📺 投屏',

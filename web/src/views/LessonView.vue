@@ -45,7 +45,23 @@ const resources = ref([])
 const textContents = ref({})
 const completed = ref(false)
 const mediaEl = ref(null)
+const castMenu = ref(null)
 const playbackRate = ref(parseFloat(readPreference(RATE_KEY, '1')) || 1)
+
+// True when the lesson's video cannot be copied into the stream and therefore has
+// to be re-encoded piece by piece - the one thing a low powered NAS cannot do
+// smoothly. The device (a TV, a box, Kodi) decodes it itself, so casting is the
+// better answer, and the lesson view says so.
+const suggestCast = computed(
+  () =>
+    Boolean(mediaStatus.value?.needs_reencode) &&
+    payload.value?.dlna_enabled !== false &&
+    !activeCast.value
+)
+
+function openCastMenu() {
+  castMenu.value?.openMenu()
+}
 
 // How the media of this lesson reaches the browser. A file the browser cannot
 // play as it is (an .mkv, or an .mp4 that is really an MPEG-TS stream) used to
@@ -650,6 +666,7 @@ onBeforeUnmount(() => {
         <!-- 投屏按钮只出现在播放页，紧挨中英文切换 -->
         <CastMenu
           v-if="isMedia"
+          ref="castMenu"
           :lesson="lesson"
           :enabled="payload.dlna_enabled !== false"
           :plan="payload.cast_plan || {}"
@@ -723,6 +740,14 @@ onBeforeUnmount(() => {
             {{ t('lesson.upNext') }} <strong>{{ payload.autoplay_title }}</strong>
           </span>
           <span v-else-if="playMode === 'next'" class="faint">{{ t('lesson.lastLesson') }}</span>
+        </div>
+
+        <div v-if="suggestCast" class="banner banner--tip">
+          <strong>{{ t('lesson.suggestCastTitle') }}</strong>
+          <span>{{ t('lesson.suggestCastBody', { codec: mediaStatus.video_codec || '' }) }}</span>
+          <button type="button" class="btn btn--sm" @click="openCastMenu">
+            {{ t('lesson.suggestCastAction') }}
+          </button>
         </div>
 
         <div v-if="mediaPreparing" class="player-note">
@@ -854,6 +879,18 @@ onBeforeUnmount(() => {
   background: var(--danger-soft);
   border: 1px solid rgba(248, 113, 113, 0.35);
   color: #fecaca;
+}
+
+/* "This lesson has to be re-encoded - cast it instead." */
+.banner--tip {
+  background: rgba(56, 189, 248, 0.12);
+  border: 1px solid rgba(56, 189, 248, 0.35);
+  color: #bae6fd;
+}
+
+.banner--tip .btn {
+  align-self: flex-start;
+  margin-top: 4px;
 }
 
 .player-toolbar {

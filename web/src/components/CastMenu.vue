@@ -82,6 +82,15 @@ function toggle() {
   if (open.value && !devices.value.length) loadDevices(false)
 }
 
+// Lets the lesson view open the menu on its own - it suggests casting when a
+// lesson would have to be re-encoded for the browser.
+function openMenu() {
+  open.value = true
+  if (!devices.value.length) loadDevices(false)
+}
+
+defineExpose({ openMenu })
+
 // The browser can read the length of most files while the server may not have
 // ffmpeg to do it - hand it over so the cast knows when the lesson ended.
 function measureDuration() {

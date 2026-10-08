@@ -1325,6 +1325,12 @@ type mediaStatus struct {
 	HLSReady bool    `json:"hls_ready"`
 	Error    string  `json:"error,omitempty"`
 	Duration float64 `json:"duration,omitempty"`
+	// VideoCodec and NeedsReencode tell the UI when a lesson cannot simply be
+	// repackaged: every piece then has to be re-encoded, which is the one thing
+	// a low powered NAS cannot do smoothly - and the moment to suggest casting
+	// the lesson to a TV instead, because the device decodes it itself.
+	VideoCodec    string `json:"video_codec,omitempty"`
+	NeedsReencode bool   `json:"needs_reencode"`
 }
 
 // handleMediaStatus decides how a lesson has to be played and starts whatever
@@ -1356,6 +1362,13 @@ func (a *App) handleMediaStatus(w http.ResponseWriter, r *http.Request) {
 	if a.Transcoder != nil {
 		a.Transcoder.ensureFFmpeg()
 		facts, err := a.Transcoder.Inspect(r.Context(), file)
+		if err == nil {
+			status.VideoCodec = facts.Info.VideoCodec
+			// True when the video stream cannot be copied into the stream as it
+			// is: every piece then has to be re-encoded, which is exactly what a
+			// weak machine cannot keep up with.
+			status.NeedsReencode = facts.Info.HasVideo() && !codecIn(facts.Info.VideoCodec, hlsSafeVideoCodecs)
+		}
 		switch {
 		case err != nil || facts.Container == "":
 			status.Mode = "raw"
