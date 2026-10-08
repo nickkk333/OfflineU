@@ -252,7 +252,15 @@ async function prepareMedia() {
   }
   mediaStatus.value = status
   if (status.mode === 'hls' && status.hls_url) {
-    await attachHls(status.hls_url)
+    if (status.hls_ready) {
+      await attachHls(status.hls_url)
+      return
+    }
+    // Reading the keyframes of a long lesson takes minutes on a slow machine.
+    // Say so and wait for it - handing the playlist to hls.js too early makes
+    // it fail and fall back to the raw file, which a browser cannot decode.
+    mediaPreparing.value = true
+    startHlsPoll(path, status.hls_url)
     return
   }
   if (status.mode === 'remux') {
@@ -267,6 +275,45 @@ async function prepareMedia() {
       startRemuxPoll(path)
     }
   }
+}
+
+// Waits for the segment plan of a lesson that is streamed as HLS. The server
+// reads the keyframes once, which costs a demux of the whole file; everything
+// after that is cached, so this wait only ever happens for the first play.
+function startHlsPoll(path, url) {
+  let attempts = 0
+  const tick = async () => {
+    if (currentPath !== path) return // the reader moved on
+    try {
+      const status = await api.mediaStatus(path)
+      mediaStatus.value = status
+      if (status.hls_ready && status.hls_url) {
+        stopRemuxPoll()
+        mediaPreparing.value = false
+        await nextTick()
+        await attachHls(status.hls_url)
+        initialisePlayer()
+        return
+      }
+      if (status.mode !== 'hls') {
+        // The server gave up on streaming it: fall back to the other modes.
+        stopRemuxPoll()
+        mediaPreparing.value = false
+        await playWithoutHls()
+        return
+      }
+      if (++attempts > 600) {
+        stopRemuxPoll()
+        mediaPreparing.value = false
+        mediaError.value = t('lesson.preparingSlow')
+        return
+      }
+    } catch {
+      /* the server is busy reading the file; keep waiting */
+    }
+    remuxTimer = window.setTimeout(tick, 2000)
+  }
+  remuxTimer = window.setTimeout(tick, 2000)
 }
 
 // Polls until the repackaged copy is there. The conversion of a long lesson can
@@ -313,7 +360,8 @@ function stopRemuxPoll() {
 // The first play of a long lesson has to wait for its segment plan (the server
 // reads the keyframes once, then caches them), so the manifest is given time and
 // a handful of retries before giving up.
-const HLS_RETRIES = 8
+const HLS_RETRIES = 20
+const HLS_RETRY_DELAY = 5000
 let hlsAttempts = 0
 
 function stopHlsRetry() {
@@ -334,7 +382,7 @@ async function attachHls(url) {
   try {
     const { default: Hls } = await import('hls.js')
     if (!Hls.isSupported()) {
-      mediaStatus.value = { mode: 'direct' }
+      await playWithoutHls()
       return
     }
     const player = new Hls({
@@ -349,17 +397,37 @@ async function attachHls(url) {
       if (!data || !data.fatal) return
       destroyHls()
       if (data.type === Hls.ErrorTypes.NETWORK_ERROR && hlsAttempts < HLS_RETRIES) {
-        // 503 while the plan is being built: try again in a moment.
+        // 503 while the segment plan is still being built: try again shortly.
         hlsAttempts += 1
-        hlsRetryTimer = window.setTimeout(() => attachHls(url), 3000)
+        hlsRetryTimer = window.setTimeout(() => attachHls(url), HLS_RETRY_DELAY)
         return
       }
-      // Fall back to the plain file; the player will at least try it.
-      mediaStatus.value = { mode: 'direct' }
-      mediaError.value = ''
       toast.error(t('toast.streamFailed'))
+      playWithoutHls()
     })
     hlsPlayer = player
+  } catch {
+    await playWithoutHls()
+  }
+}
+
+// HLS did not work out. Asking the server for a plan without HLS makes it
+// repackage the whole lesson instead - slow, but it plays. Falling back to the
+// plain file would hand the browser an .mkv it cannot decode at all.
+async function playWithoutHls() {
+  const path = lesson.value?.rel_path
+  if (!path) {
+    mediaStatus.value = { mode: 'direct' }
+    return
+  }
+  try {
+    const status = await api.mediaStatus(path, false)
+    mediaStatus.value = status
+    mediaError.value = status.error || ''
+    if (status.mode === 'remux' && !status.error && !status.ready) {
+      mediaPreparing.value = true
+      startRemuxPoll(path)
+    }
   } catch {
     mediaStatus.value = { mode: 'direct' }
   }

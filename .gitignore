@@ -33,6 +33,14 @@ data/
 # bundled offline image tar (built + saved by fnos/build.ps1; *.tar above covers it)
 /fnos/offlineu/app/images/
 
+# ---- Media files dropped in the repo root for manual testing ----
+# Handy to have a sample lesson around, far too big to end up in git: the test
+# suites build their own fixtures in temporary folders.
+/*.mkv
+/*.mp4
+/*.ts
+/*.mov
+
 # ---- Editors / OS ----
 .vscode/
 .idea/

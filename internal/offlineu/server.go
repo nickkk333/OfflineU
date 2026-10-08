@@ -1315,12 +1315,16 @@ func serveCourseFile(w http.ResponseWriter, r *http.Request, full, mime string) 
 //	        true when /files/ can serve the finished copy
 //	raw     nothing can be done for it - the bytes are served as they are
 type mediaStatus struct {
-	Mode      string  `json:"mode"`
-	Ready     bool    `json:"ready"`
-	Preparing bool    `json:"preparing"`
-	HLSURL    string  `json:"hls_url,omitempty"`
-	Error     string  `json:"error,omitempty"`
-	Duration  float64 `json:"duration,omitempty"`
+	Mode      string `json:"mode"`
+	Ready     bool   `json:"ready"`
+	Preparing bool   `json:"preparing"`
+	HLSURL    string `json:"hls_url,omitempty"`
+	// HLSReady says whether the segment plan is finished. For a long lesson on a
+	// slow machine that takes minutes, so the browser waits for this while
+	// telling the reader what is happening instead of failing to play.
+	HLSReady bool    `json:"hls_ready"`
+	Error    string  `json:"error,omitempty"`
+	Duration float64 `json:"duration,omitempty"`
 }
 
 // handleMediaStatus decides how a lesson has to be played and starts whatever
@@ -1366,6 +1370,7 @@ func (a *App) handleMediaStatus(w http.ResponseWriter, r *http.Request) {
 			// Build the segment plan now, so the first request for the
 			// playlist does not have to wait for it.
 			a.Transcoder.EnsureHLSIndex(file)
+			status.HLSReady = a.Transcoder.HLSIndexReady(file)
 		default:
 			// Audio lessons, files of unknown length and files whose video
 			// would have to be re-encoded are repackaged as one MP4 instead.

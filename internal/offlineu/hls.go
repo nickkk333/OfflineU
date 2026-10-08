@@ -508,6 +508,25 @@ func (t *Transcoder) CanStreamHLS(ctx context.Context, file string) bool {
 	return true
 }
 
+// HLSIndexReady reports whether the segment plan is finished, without waiting
+// for it. Reading the keyframes of a long lesson means demuxing it once, which
+// takes minutes on a slow machine - the UI asks for this and shows that the
+// lesson is being prepared instead of letting the player give up.
+func (t *Transcoder) HLSIndexReady(file string) bool {
+	stat, err := os.Stat(file)
+	if err != nil {
+		return false
+	}
+	key := filepath.Clean(file)
+	if _, ok := t.hlsIndexMemory(key, stat.Size(), stat.ModTime()); ok {
+		return true
+	}
+	if _, ok := loadHLSIndex(filepath.Join(t.hlsDir(file), hlsIndexFile), stat.Size(), stat.ModTime()); ok {
+		return true
+	}
+	return false
+}
+
 // EnsureHLSIndex starts building the segment plan in the background so the
 // first request for the playlist finds it already there.
 func (t *Transcoder) EnsureHLSIndex(file string) {
