@@ -41,8 +41,8 @@ services:
     # nodes of the host. Uncomment the ones your machine has - a missing node
     # makes Docker refuse to start, so only enable what exists. Without any of
     # them OfflineU re-encodes in software, which still works, just slower.
-    # devices:
-    #   - /dev/dri:/dev/dri                  # Intel / AMD / Rockchip iGPU
+    devices:
+      - /dev/dri:/dev/dri                  # Intel / AMD / Rockchip iGPU
     #   - /dev/video0:/dev/video0            # ARM V4L2 memory-to-memory
     #   - /dev/nvidia0:/dev/nvidia0          # NVIDIA NVENC
     #   - /dev/nvidiactl:/dev/nvidiactl

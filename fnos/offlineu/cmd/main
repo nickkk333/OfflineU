@@ -82,20 +82,38 @@ case "${1:-}" in
   start)
     if is_running; then log "already running"; exit 0; fi
     ensure_image || exit 1
-    mkdir -p "$DATA_DIR" "$COURSES" 2>/dev/null || true
+    # Converted media (HLS segments, remuxed files) has to survive a restart and
+    # must not grow the container's own writable layer - the container is removed
+    # on every start - so it gets a folder of its own on the app's persistent
+    # volume. The image already points OFFLINEU_CACHE_DIR at /app/cache.
+    CACHE_DIR="${DATA_DIR}/cache"
+    mkdir -p "$DATA_DIR" "$CACHE_DIR" "$COURSES" 2>/dev/null || true
     docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
+    # Hardware encoding (OFFLINEU_HWACCEL=auto) needs the GPU's device node.
+    # Only ask for it when this machine really has one: Docker refuses to start a
+    # container whose --device path does not exist.
+    DEVICES=()
+    if [ -d /dev/dri ]; then
+      DEVICES=(--device "/dev/dri:/dev/dri")
+      log "passing /dev/dri through (hardware encoding available)"
+    else
+      log "no /dev/dri on this host: re-encoding stays in software"
+    fi
     log "docker run -d $IMAGE (host net, port $PORT, courses $COURSES)"
     docker run -d --name "$CONTAINER" \
       --restart unless-stopped \
       --network host \
       --user 0:0 \
+      ${DEVICES[@]+"${DEVICES[@]}"} \
       -e OFFLINEU_HOST=0.0.0.0 \
       -e "OFFLINEU_PORT=${PORT}" \
       -e OFFLINEU_ROOTS=/courses \
       -e OFFLINEU_PROGRESS_DIR=/app/data \
+      -e OFFLINEU_CACHE_DIR=/app/cache \
       -e "TZ=${TZ_VALUE}" \
       -v "${COURSES}:/courses:ro" \
       -v "${DATA_DIR}:/app/data" \
+      -v "${CACHE_DIR}:/app/cache" \
       "$IMAGE" >> "$LOG" 2>&1
     rc=$?
     if [ "$rc" -ne 0 ]; then log "ERROR: docker run failed rc=$rc"; exit 1; fi

@@ -32,8 +32,8 @@ services:
       - ./cache:/app/cache
     # 硬件转码（OFFLINEU_HWACCEL=auto 时）需要宿主机对应的设备节点：只启用真实存在
     # 的那些，否则 Docker 会因设备不存在而拒绝启动。
-    # devices:
-    #   - /dev/dri:/dev/dri          # Intel / AMD / Rockchip 核显（VAAPI、QSV、RKMPP）
+    devices:
+      - /dev/dri:/dev/dri          # Intel / AMD / Rockchip 核显（VAAPI、QSV、RKMPP）
     #   - /dev/video0:/dev/video0    # ARM V4L2（如树莓派）
     #   - /dev/nvidia0:/dev/nvidia0  # NVIDIA（NVENC，还需 nvidiactl、nvidia-uvm）
     #   - /dev/nvidiactl:/dev/nvidiactl
