@@ -1,5 +1,5 @@
 appname = offlineu
-version = 2.1.2
+version = 2.1.4
 display_name = OfflineU
 desktop_uidir = ui
 desktop_applaunchname = offlineu.main
