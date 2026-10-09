@@ -55,6 +55,36 @@ dependencies.
 OfflineU ships as **one static Go binary** with the Vue frontend embedded in it, so the
 runtime needs neither Python nor Node.
 
+### ⚡ One command: the Makefile
+
+Everything below is also wired up as make targets (GNU Make 4.x; Windows, macOS and
+Linux):
+
+| Command | What it produces |
+| ------- | ---------------- |
+| `make` | lists every target |
+| `make all` | **exe + Docker image + fnOS package** — the whole release set |
+| `make exe` | `dist/offlineu-<version>.exe` (cross-compiled, works on any host) |
+| `make exe-portable` | portable exe with ffmpeg embedded (Windows host, via `build-windows.ps1`) |
+| `make image` | `offlineu:local` **and** `offlineu:<version>` |
+| `make image-save` | `image-dist/offlineu-amd64-<version>.tar` for an offline `docker load` |
+| `make fpk` | `fnos/offlineu_<version>_x86.fpk` (builds the image first, then reuses it) |
+| `make web` | only the frontend (`web/dist`) |
+| `make check` | `go vet` + `go test` |
+| `make clean` | removes `dist/`, `image-dist/` and the `.fpk` files |
+
+The version always comes from the git tag, exactly like `build-windows.ps1`,
+`docker/run.ps1` and `fnos/build.ps1`: `HEAD` tagged `v2.1.2` → `2.1.2`, otherwise
+`latest`. So a numbered release is:
+
+```bash
+git tag v2.1.2 && git push origin v2.1.2
+make all
+```
+
+Requirements: Go 1.23+, Node 22+, Docker (image and fpk) and PowerShell (`fpk`;
+`powershell` on Windows, `pwsh` elsewhere). `make exe` is pure Go + Node, no Docker.
+
 ### Prerequisites
 
 * **Go 1.23+** — `go version` (the Dockerfile and CI use Go 1.24; any 1.23/1.24 works).
