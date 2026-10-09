@@ -26,7 +26,12 @@ const (
 // development build: latest, the same marker every other dev build uses.
 var Version = "latest"
 
-var videoExtensions = []string{".mp4", ".mkv", ".avi", ".mov", ".webm", ".m4v", ".flv", ".wmv"}
+var videoExtensions = []string{".mp4", ".mkv", ".avi", ".mov", ".webm", ".m4v", ".flv", ".wmv", ".ts", ".m2ts", ".mts"}
+
+// ambiguousVideoExtensions are the video extensions that also mean something
+// else - ".ts" is a TypeScript source file as often as it is a transport stream
+// - so the parser checks the content before it believes the name.
+var ambiguousVideoExtensions = []string{".ts", ".m2ts", ".mts"}
 var audioExtensions = []string{".mp3", ".wav", ".m4a", ".aac", ".ogg", ".flac"}
 var subtitleExtensions = []string{".srt", ".vtt", ".ass", ".sub", ".sbv"}
 var textExtensions = []string{".txt", ".md", ".html", ".htm", ".pdf", ".docx", ".doc", ".rtf"}
@@ -44,6 +49,9 @@ var mimeOverrides = map[string]string{
 	".avi":  "video/x-msvideo",
 	".flv":  "video/x-flv",
 	".wmv":  "video/x-ms-wmv",
+	".ts":   "video/mp2t",
+	".m2ts": "video/mp2t",
+	".mts":  "video/mp2t",
 	".mp3":  "audio/mpeg",
 	".m4a":  "audio/mp4",
 	".aac":  "audio/aac",

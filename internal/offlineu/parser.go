@@ -2,6 +2,7 @@ package offlineu
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -133,7 +134,7 @@ func createLessonFromFile(filePath, coursePath string) *Lesson {
 	}
 
 	switch {
-	case extIn(extension, videoExtensions):
+	case extIn(extension, videoExtensions) && looksLikeVideo(filePath, extension):
 		lesson.LessonType = "video"
 		lesson.VideoFile = relative
 		lesson.VideoMime = GuessMime(filePath, "video/mp4")
@@ -154,6 +155,41 @@ func createLessonFromFile(filePath, coursePath string) *Lesson {
 		return nil // unsupported file type
 	}
 	return lesson
+}
+
+// looksLikeVideo is the last check before a file becomes a video lesson. Most
+// extensions are trusted as they are; the ones a video shares with other content
+// are checked against the file itself.
+func looksLikeVideo(path, extension string) bool {
+	if !extIn(extension, ambiguousVideoExtensions) {
+		return true
+	}
+	return looksLikeMPEGTS(path)
+}
+
+// looksLikeMPEGTS reports whether a file starts like an MPEG transport stream,
+// which is what ".ts" means in a course folder. The extension is ambiguous - it
+// is a TypeScript source file just as often - so the parser reads the packet
+// sync byte instead of trusting the name: 188-byte packets starting with 0x47,
+// optionally preceded by a 4-byte timestamp (Blu-ray style .m2ts).
+func looksLikeMPEGTS(path string) bool {
+	handle, err := os.Open(path)
+	if err != nil {
+		return false
+	}
+	defer handle.Close()
+	buffer := make([]byte, 200)
+	read, _ := io.ReadFull(handle, buffer)
+	if read < 1 {
+		return false
+	}
+	if buffer[0] == 0x47 {
+		return true
+	}
+	if read >= 197 {
+		return buffer[4] == 0x47 && buffer[196] == 0x47
+	}
+	return false
 }
 
 // AllLessons flattens the tree into the order lessons are shown in.
