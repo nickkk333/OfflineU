@@ -28,6 +28,9 @@ var Version = "latest"
 
 var videoExtensions = []string{".mp4", ".mkv", ".avi", ".mov", ".webm", ".m4v", ".flv", ".wmv", ".ts", ".m2ts", ".mts"}
 
+// tsSyncByte starts every packet of an MPEG transport stream.
+const tsSyncByte = 0x47
+
 // ambiguousVideoExtensions are the video extensions that also mean something
 // else - ".ts" is a TypeScript source file as often as it is a transport stream
 // - so the parser checks the content before it believes the name.

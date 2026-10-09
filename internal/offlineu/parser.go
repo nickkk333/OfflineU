@@ -167,27 +167,64 @@ func looksLikeVideo(path, extension string) bool {
 	return looksLikeMPEGTS(path)
 }
 
-// looksLikeMPEGTS reports whether a file starts like an MPEG transport stream,
-// which is what ".ts" means in a course folder. The extension is ambiguous - it
-// is a TypeScript source file just as often - so the parser reads the packet
-// sync byte instead of trusting the name: 188-byte packets starting with 0x47,
-// optionally preceded by a 4-byte timestamp (Blu-ray style .m2ts).
+// Packet sizes a transport stream comes in: plain TS uses 188-byte packets, a
+// Blu-ray style .m2ts prefixes each of them with a 4-byte timestamp (192).
+var tsPacketSizes = []int{188, 192}
+
+// tsSyncPackets is how many consecutive sync bytes have to line up before a file
+// is believed to be a transport stream. Three in a row cannot happen by chance,
+// and it is cheap to check.
+const tsSyncPackets = 3
+
+// looksLikeMPEGTS reports whether a file is an MPEG transport stream, which is
+// what ".ts" means in a course folder. The extension is ambiguous - it is a
+// TypeScript source file just as often - so the parser looks at the packets
+// instead of trusting the name.
+//
+// The sync byte is searched for rather than assumed to sit at offset 0: course
+// platforms regularly put their own header in front of the stream (this very
+// file carries 188 bytes of one), so what identifies a transport stream is the
+// 0x47 repeating at an exact packet interval.
 func looksLikeMPEGTS(path string) bool {
 	handle, err := os.Open(path)
 	if err != nil {
 		return false
 	}
 	defer handle.Close()
-	buffer := make([]byte, 200)
+
+	window := 0
+	for _, size := range tsPacketSizes {
+		if size*tsSyncPackets > window {
+			window = size * tsSyncPackets
+		}
+	}
+	// A few packets are enough; a whole file need never be read during a scan.
+	buffer := make([]byte, window+1024)
 	read, _ := io.ReadFull(handle, buffer)
-	if read < 1 {
+	if read <= 0 {
 		return false
 	}
-	if buffer[0] == 0x47 {
-		return true
-	}
-	if read >= 197 {
-		return buffer[4] == 0x47 && buffer[196] == 0x47
+
+	for _, size := range tsPacketSizes {
+		needed := size * tsSyncPackets
+		if read < needed {
+			continue
+		}
+		for offset := 0; offset+needed <= read; offset++ {
+			if buffer[offset] != tsSyncByte {
+				continue
+			}
+			aligned := true
+			for packet := 1; packet < tsSyncPackets; packet++ {
+				if buffer[offset+packet*size] != tsSyncByte {
+					aligned = false
+					break
+				}
+			}
+			if aligned {
+				return true
+			}
+		}
 	}
 	return false
 }

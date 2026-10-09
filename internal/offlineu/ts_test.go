@@ -14,7 +14,7 @@ func TestTSExtensionIsDecidedByContent(t *testing.T) {
 	video := filepath.Join(dir, "第01课时.课程概述.ts")
 	source := filepath.Join(dir, "player.ts")
 
-	writeFile(t, video, tsPacket())
+	writeFile(t, video, tsStream(4))
 	writeFile(t, source, []byte("export function play(): void {\n  console.log('hi')\n}\n"))
 
 	if !looksLikeVideo(video, ".ts") {
@@ -33,11 +33,14 @@ func TestTSExtensionIsDecidedByContent(t *testing.T) {
 func TestM2TSPacketsAreRecognised(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "lesson.m2ts")
-	packet := tsPacket()
 	// Every packet of a .m2ts stream carries the 4-byte timestamp, so the sync
-	// byte sits at 4 and then at 4 + 192.
-	prefixed := append([]byte{0x00, 0x01, 0x02, 0x03}, packet...)
-	writeFile(t, path, append(append([]byte{}, prefixed...), prefixed...))
+	// byte sits at 4 and then every 192 bytes after it.
+	prefixed := append([]byte{0x00, 0x01, 0x02, 0x03}, tsPacket()...)
+	stream := []byte{}
+	for index := 0; index < 4; index++ {
+		stream = append(stream, prefixed...)
+	}
+	writeFile(t, path, stream)
 
 	if !looksLikeVideo(path, ".m2ts") {
 		t.Error("a timestamped .m2ts stream must be recognised")
@@ -59,11 +62,37 @@ func TestEmptyTSFileIsNotAVideo(t *testing.T) {
 
 func tsPacket() []byte {
 	packet := make([]byte, 188)
-	packet[0] = 0x47
+	packet[0] = tsSyncByte
 	for index := range packet[1:] {
 		packet[index+1] = byte(index)
 	}
 	return packet
+}
+
+// tsStream builds a stream of packets. A platform header in front of the first
+// packet is what real course files look like, so the parser must find the sync
+// byte rather than expecting it at offset 0.
+func tsStream(packets int) []byte {
+	stream := []byte{}
+	for index := 0; index < packets; index++ {
+		stream = append(stream, tsPacket()...)
+	}
+	return stream
+}
+
+// A course platform's own header in front of the stream must not hide it.
+func TestTSWithALeadingHeaderIsRecognised(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "第01课时.课程概述.ts")
+	header := make([]byte, 188)
+	for index := range header {
+		header[index] = 0xff
+	}
+	writeFile(t, path, append(header, tsStream(4)...))
+
+	if !looksLikeVideo(path, ".ts") {
+		t.Error("a transport stream behind a 188-byte header must be recognised")
+	}
 }
 
 func writeFile(t *testing.T, path string, content []byte) {
