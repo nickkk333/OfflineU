@@ -1365,9 +1365,10 @@ func (a *App) handleMediaStatus(w http.ResponseWriter, r *http.Request) {
 		if err == nil {
 			status.VideoCodec = facts.Info.VideoCodec
 			// True when the video stream cannot be copied into the stream as it
-			// is: every piece then has to be re-encoded, which is exactly what a
+			// is (re-encoding was forced, or the codec is not one HLS copies):
+			// every piece then has to be re-encoded, which is exactly what a
 			// weak machine cannot keep up with.
-			status.NeedsReencode = facts.Info.HasVideo() && !codecIn(facts.Info.VideoCodec, hlsSafeVideoCodecs)
+			status.NeedsReencode = !a.Transcoder.canCopyVideo(facts.Info, hlsSafeVideoCodecs)
 		}
 		switch {
 		case err != nil || facts.Container == "":

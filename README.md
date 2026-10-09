@@ -1102,6 +1102,7 @@ Environment variables:
 | `OFFLINEU_TRANSCODE_PRESET` | libx264 speed setting (default `veryfast`; `ultrafast` for a really weak CPU) |
 | `OFFLINEU_TRANSCODE_CRF` | Quality factor, also used as the quantiser of the hardware encoders (default `23`) |
 | `OFFLINEU_HWACCEL` | `auto` (default) uses the GPU when ffmpeg offers one — NVENC, Quick Sync, VAAPI, VideoToolbox, AMF, V4L2 or RKMPP; `off` never; or one name to force it (`nvenc`, `qsv`, `vaapi`, `videotoolbox`, `amf`, `v4l2m2m`, `rkmpp`) |
+| `OFFLINEU_FORCE_REENCODE` | `1` re-encodes every lesson instead of copying its streams — for transport streams (`.ts`) a platform ships with deliberately broken packets: copying keeps the damage and the browser refuses to play it, re-encoding drops it |
 | `AUTO_LOAD_COURSE`      | Load this course at startup when no path argument is given                  |
 
 Locations inside a configured root are shown **relative to the folder you mapped in**

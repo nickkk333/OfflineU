@@ -43,6 +43,10 @@ const (
 	EnvTranscodeCRF = "OFFLINEU_TRANSCODE_CRF"
 	// OFFLINEU_HWACCEL is "auto" (default), "off", "vaapi" or "qsv".
 	EnvHWAccel = "OFFLINEU_HWACCEL"
+	// OFFLINEU_FORCE_REENCODE re-encodes even when the streams could simply be
+	// copied. Needed for transport streams a platform ships with broken packets:
+	// copying hands the damage to the browser, which refuses to decode it.
+	EnvForceReencode = "OFFLINEU_FORCE_REENCODE"
 )
 
 // Portable is empty for an ordinary build ("go build", "go run", the Docker
@@ -156,10 +160,11 @@ type Config struct {
 // more than 720p, and let the GPU do it when there is one.
 func transcodeSettings() TranscodeOptions {
 	options := TranscodeOptions{
-		MaxHeight: DefaultTranscodeHeight,
-		Preset:    strings.TrimSpace(os.Getenv(EnvTranscodePreset)),
-		CRF:       envIntOr(EnvTranscodeCRF, DefaultTranscodeCRF),
-		HWAccel:   strings.TrimSpace(os.Getenv(EnvHWAccel)),
+		MaxHeight:     DefaultTranscodeHeight,
+		Preset:        strings.TrimSpace(os.Getenv(EnvTranscodePreset)),
+		CRF:           envIntOr(EnvTranscodeCRF, DefaultTranscodeCRF),
+		HWAccel:       strings.TrimSpace(os.Getenv(EnvHWAccel)),
+		ForceReencode: isEnabled(os.Getenv(EnvForceReencode)),
 	}
 	if height := envIntOr(EnvTranscodeHeight, DefaultTranscodeHeight); height >= 0 {
 		options.MaxHeight = height
@@ -685,6 +690,16 @@ func ExpandHome(path string) string {
 		}
 	}
 	return trimmed
+}
+
+// isEnabled reads a plain on/off switch. Anything but an explicit "off" style
+// value counts as off here - the variable has to be turned on deliberately.
+func isEnabled(raw string) bool {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "1", "on", "true", "yes", "enabled":
+		return true
+	}
+	return false
 }
 
 func envOr(key, fallback string) string {

@@ -27,6 +27,10 @@ services:
       # Hardware encoding: auto (default) picks NVENC / Quick Sync / VAAPI /
       # AMF / V4L2 / RKMPP, off never asks, or name one to force it.
       # - OFFLINEU_HWACCEL=auto
+      # Transport streams (.ts) a platform ships with deliberately broken packets
+      # only play when re-encoded: set this to 1 if copying hands the damage to
+      # the browser and playback fails.
+      # - OFFLINEU_FORCE_REENCODE=1
       # Optional: skip the picker and load a course at startup.
       # - AUTO_LOAD_COURSE=/courses/My Course
     volumes:

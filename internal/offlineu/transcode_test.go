@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -325,5 +326,114 @@ func TestLimitedBufferKeepsTheFirstBytes(t *testing.T) {
 	}
 	if got := buffer.String(); got != "diagnost" {
 		t.Errorf("buffer = %q", got)
+	}
+}
+
+// OFFLINEU_FORCE_REENCODE exists for transport streams a platform ships with
+// deliberately broken packets: copying would hand the damage straight to the
+// browser, whose decoder is far less forgiving than ffmpeg.
+func TestForceReencodeSkipsTheCopyShortcut(t *testing.T) {
+	forced := stubTranscoder()
+	forced.forceReencode = true
+
+	args, _, err := forced.Args("lesson.ts", MediaInfo{VideoCodec: "h264", AudioCodec: "aac"}, 0)
+	if err != nil {
+		t.Fatalf("args failed: %v", err)
+	}
+	joined := strings.Join(args, " ")
+	if !strings.Contains(joined, "-c:v libx264") || !strings.Contains(joined, "-c:a aac") {
+		t.Errorf("a forced re-encode must not copy the streams: %q", joined)
+	}
+	if strings.Contains(joined, "-c:v copy") || strings.Contains(joined, "-c:a copy") {
+		t.Errorf("the copy shortcut must be gone: %q", joined)
+	}
+
+	// A lesson without a video stream has nothing to re-encode: the switch is
+	// about broken video packets, so "no video" stays copyable.
+	if !forced.canCopyVideo(MediaInfo{AudioCodec: "aac"}, safeVideoCodecs) {
+		t.Error("an audio-only lesson must not be marked as needing a video re-encode")
+	}
+	if forced.canCopyAudio(MediaInfo{AudioCodec: "aac"}, safeAudioCodecs) {
+		t.Error("forced re-encoding must also cover the audio stream")
+	}
+	// Without the switch an H.264/AAC stream is still copied as before.
+	plain := stubTranscoder()
+	if !plain.canCopyVideo(MediaInfo{VideoCodec: "h264"}, safeVideoCodecs) {
+		t.Error("without the switch an h264 stream must stay copyable")
+	}
+}
+
+// A copied piece and a re-encoded piece of the same lesson are different files:
+// turning the switch on must not serve pieces that still carry the damage.
+func TestForcedReencodeGetsItsOwnCache(t *testing.T) {
+	plain := stubTranscoder()
+	forced := stubTranscoder()
+	forced.forceReencode = true
+	if plain.cacheKey("lesson.ts") == forced.cacheKey("lesson.ts") {
+		t.Error("a copied piece and a re-encoded piece must not share a cache name")
+	}
+	if plain.cacheKey("a.ts") == plain.cacheKey("b.ts") {
+		t.Error("different lessons must not share a cache name")
+	}
+}
+
+// The bug this guards against: a download that died halfway left a truncated
+// file at the final path, os.Stat saw "a file exists", and every start since
+// reused a binary the OS refuses to execute - silently disabling all playback.
+func TestBinaryRunsRejectsWhatCannotStart(t *testing.T) {
+	if binaryRuns("") {
+		t.Error("an empty path must not count as a running binary")
+	}
+	if binaryRuns(filepath.Join(t.TempDir(), "missing")) {
+		t.Error("a missing file must not count as a running binary")
+	}
+	// A truncated download: the file exists but is not an executable.
+	broken := filepath.Join(t.TempDir(), "ffmpeg.exe")
+	if err := os.WriteFile(broken, []byte("MZ this is half a program"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if binaryRuns(broken) {
+		t.Error("a truncated download must not be trusted as a working ffmpeg")
+	}
+}
+
+func TestDownloadFileFailsCleanlyOnATruncatedTransfer(t *testing.T) {
+	// The server announces 64 bytes but the connection dies after 8: exactly
+	// what used to leave a half downloaded ffmpeg behind.
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Length", "64")
+		_, _ = w.Write(make([]byte, 8))
+	}))
+	defer server.Close()
+
+	dest := filepath.Join(t.TempDir(), "ffmpeg")
+	if err := downloadFile(server.URL+"/ffmpeg", dest); err == nil {
+		t.Fatal("a truncated download must fail")
+	}
+	if _, err := os.Stat(dest); !os.IsNotExist(err) {
+		t.Error("a truncated download must not leave a file at the destination")
+	}
+	if _, err := os.Stat(dest + ".part"); !os.IsNotExist(err) {
+		t.Error("the partial file must be cleaned up")
+	}
+}
+
+func TestDownloadFileKeepsACompleteTransfer(t *testing.T) {
+	payload := bytes.Repeat([]byte{0x47}, 4096)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write(payload)
+	}))
+	defer server.Close()
+
+	dest := filepath.Join(t.TempDir(), "ffmpeg")
+	if err := downloadFile(server.URL+"/ffmpeg", dest); err != nil {
+		t.Fatalf("download failed: %v", err)
+	}
+	got, err := os.ReadFile(dest)
+	if err != nil || !bytes.Equal(got, payload) {
+		t.Errorf("dest holds %d bytes (read error: %v)", len(got), err)
+	}
+	if _, err := os.Stat(dest + ".part"); !os.IsNotExist(err) {
+		t.Error("no partial file may remain after a good download")
 	}
 }

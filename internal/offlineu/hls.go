@@ -102,7 +102,7 @@ type hlsIndexEntry struct {
 
 // hlsDir is the folder holding the segments and the index of one lesson.
 func (t *Transcoder) hlsDir(file string) string {
-	return filepath.Join(t.CacheDir(), hlsCacheSubdir, sha1Hex(filepath.Clean(file)))
+	return filepath.Join(t.CacheDir(), hlsCacheSubdir, sha1Hex(t.cacheKey(file)))
 }
 
 // HLSIndex returns the segment plan of a file, building it when it is missing.
@@ -183,8 +183,8 @@ func (t *Transcoder) buildHLSIndex(ctx context.Context, file string, stat os.Fil
 	index := &hlsIndex{
 		Version:    hlsIndexVersion,
 		Duration:   info.Duration,
-		CopyVideo:  codecIn(info.VideoCodec, hlsSafeVideoCodecs),
-		CopyAudio:  info.AudioCodec == "" || codecIn(info.AudioCodec, hlsSafeAudioCodecs),
+		CopyVideo:  t.canCopyVideo(info, hlsSafeVideoCodecs),
+		CopyAudio:  t.canCopyAudio(info, hlsSafeAudioCodecs),
 		VideoCodec: info.VideoCodec,
 		AudioCodec: info.AudioCodec,
 		Height:     info.Height,
@@ -499,10 +499,14 @@ func (t *Transcoder) CanStreamHLS(ctx context.Context, file string) bool {
 	if !facts.Info.HasVideo() || facts.Info.Duration <= 0 {
 		return false
 	}
-	// Copying the video stream needs a keyframe list, which only ffprobe can
-	// produce. Without it the lesson is remuxed as one file instead - still
-	// cheaper than re-encoding it.
-	if codecIn(facts.Info.VideoCodec, hlsSafeVideoCodecs) && t.ffprobe == "" {
+	// Copying the video stream means cutting at keyframes: anywhere else the
+	// pieces would overlap or leave a gap. Without a keyframe list the only
+	// honest answer is to re-encode - which is exactly what a slow NAS must not
+	// do by surprise - so when the video will be copied and there is no ffprobe
+	// to list the keyframes, the caller falls back to remuxing the whole file
+	// instead. Re-encoding (forced or because of the codec) needs no keyframe
+	// list: the pieces are cut on a fixed grid.
+	if t.canCopyVideo(facts.Info, hlsSafeVideoCodecs) && t.ffprobe == "" {
 		return false
 	}
 	return true

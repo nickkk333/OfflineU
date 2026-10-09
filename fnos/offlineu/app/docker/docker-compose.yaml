@@ -25,6 +25,8 @@ services:
       # encoder the machine has (NVENC / Quick Sync / VAAPI / AMF / V4L2 / RKMPP).
       # - OFFLINEU_TRANSCODE_HEIGHT=720
       # - OFFLINEU_HWACCEL=auto
+      # 课程平台的 .ts 切片若含故意损坏的包（复制后浏览器拒播），置 1 强制重编码。
+      # - OFFLINEU_FORCE_REENCODE=1
       - TZ=${OFFLINEU_TZ:-Asia/Shanghai}
     volumes:
       - ${OFFLINEU_COURSES:-/mnt/offlineu/courses}:/courses:ro

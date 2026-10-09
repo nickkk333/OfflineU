@@ -112,6 +112,12 @@ type TranscodeOptions struct {
 	// HWAccel is "auto" (use the GPU when ffmpeg offers one), "off", "vaapi" or
 	// "qsv".
 	HWAccel string
+	// ForceReencode re-encodes even when the streams could simply be copied.
+	// Some course platforms ship transport streams with deliberately broken
+	// packets (one every few seconds): copying hands the damage to the browser,
+	// whose decoder is far less forgiving than ffmpeg, while re-encoding drops
+	// it and produces a clean stream.
+	ForceReencode bool
 }
 
 // Transcoder wraps the optional ffmpeg installation.
@@ -125,6 +131,8 @@ type Transcoder struct {
 	Preset    string
 	CRF       int
 	hwMode    string
+	// forceReencode skips the "the streams can be copied" shortcut.
+	forceReencode bool
 
 	// initMu guards the lazily created helpers below: a transcoder built by
 	// hand (tests) starts without them and gets them on first use.
@@ -152,13 +160,14 @@ type Transcoder struct {
 // trimming).
 func NewTranscoder(cacheDir string, limitBytes int64, options TranscodeOptions) *Transcoder {
 	transcoder := &Transcoder{
-		ffmpeg:    findBinary(EnvFFmpeg, "ffmpeg"),
-		ffprobe:   findBinary(EnvFFprobe, "ffprobe"),
-		cacheDir:  cacheDir,
-		MaxHeight: options.MaxHeight,
-		Preset:    options.Preset,
-		CRF:       options.CRF,
-		hwMode:    strings.ToLower(strings.TrimSpace(options.HWAccel)),
+		ffmpeg:        findBinary(EnvFFmpeg, "ffmpeg"),
+		ffprobe:       findBinary(EnvFFprobe, "ffprobe"),
+		cacheDir:      cacheDir,
+		MaxHeight:     options.MaxHeight,
+		Preset:        options.Preset,
+		CRF:           options.CRF,
+		hwMode:        strings.ToLower(strings.TrimSpace(options.HWAccel)),
+		forceReencode: options.ForceReencode,
 	}
 	if transcoder.hwMode == "" {
 		transcoder.hwMode = hwAuto
@@ -481,12 +490,12 @@ func (t *Transcoder) Plan(ctx context.Context, file string) CastPlan {
 	plan := CastPlan{TranscodeAvailable: t.Available()}
 	friendly := t.friendlyContainer(file)
 	if info, err := t.Probe(ctx, file); err == nil {
-		if info.HasVideo() && !codecIn(info.VideoCodec, safeVideoCodecs) {
+		if !t.canCopyVideo(info, safeVideoCodecs) {
 			plan.NeedsTranscode = true
 			plan.Reason = "video_codec"
 			return plan
 		}
-		if info.AudioCodec != "" && !codecIn(info.AudioCodec, safeAudioCodecs) {
+		if !t.canCopyAudio(info, safeAudioCodecs) {
 			plan.NeedsTranscode = true
 			plan.Reason = "audio_codec"
 			return plan
@@ -509,6 +518,31 @@ func (t *Transcoder) friendlyContainer(file string) bool {
 	return extIn(extension, castFriendlyVideo)
 }
 
+// canCopyVideo reports whether the video stream can be handed over untouched.
+// A lesson without a video stream has nothing to copy, forced or not; a lesson
+// with one never can when re-encoding has been forced on (see TranscodeOptions).
+func (t *Transcoder) canCopyVideo(info MediaInfo, allowed []string) bool {
+	if !info.HasVideo() {
+		return true
+	}
+	if t.forceReencode {
+		return false
+	}
+	return codecIn(info.VideoCodec, allowed)
+}
+
+// canCopyAudio is the same question for the audio stream. A lesson without an
+// audio stream has nothing to copy, forced or not.
+func (t *Transcoder) canCopyAudio(info MediaInfo, allowed []string) bool {
+	if info.AudioCodec == "" {
+		return true
+	}
+	if t.forceReencode {
+		return false
+	}
+	return codecIn(info.AudioCodec, allowed)
+}
+
 func codecIn(codec string, allowed []string) bool {
 	for _, candidate := range allowed {
 		if codec == candidate {
@@ -525,8 +559,8 @@ func (t *Transcoder) Args(file string, info MediaInfo, startSeconds int) ([]stri
 	if !t.Available() {
 		return nil, "", errors.New("ffmpeg is not installed")
 	}
-	copyVideo := !info.HasVideo() || codecIn(info.VideoCodec, safeVideoCodecs)
-	copyAudio := info.AudioCodec == "" || codecIn(info.AudioCodec, safeAudioCodecs)
+	copyVideo := t.canCopyVideo(info, safeVideoCodecs)
+	copyAudio := t.canCopyAudio(info, safeAudioCodecs)
 
 	args := []string{"-hide_banner", "-loglevel", "error", "-nostdin"}
 	// Hardware decoding only pays off when a frame is actually re-encoded.
@@ -777,8 +811,8 @@ func (t *Transcoder) browserFileArgs(file string, info MediaInfo, outPath string
 	if !t.Available() {
 		return nil, errors.New("ffmpeg is not installed")
 	}
-	copyVideo := !info.HasVideo() || codecIn(info.VideoCodec, safeVideoCodecs)
-	copyAudio := info.AudioCodec == "" || codecIn(info.AudioCodec, safeAudioCodecs)
+	copyVideo := t.canCopyVideo(info, safeVideoCodecs)
+	copyAudio := t.canCopyAudio(info, safeAudioCodecs)
 
 	args := []string{"-hide_banner", "-loglevel", "error", "-nostdin", "-y"}
 	args = append(args, t.hwInputArgs(!copyVideo || !copyAudio)...)
@@ -813,11 +847,23 @@ func (t *Transcoder) browserFileArgs(file string, info MediaInfo, outPath string
 	return args, nil
 }
 
+// cacheKey identifies the converted copies of one lesson. The forced re-encode
+// switch is part of it: a segment (or remuxed MP4) made by copying the streams
+// must not be served again once the same lesson has to be re-encoded, and the
+// other way round.
+func (t *Transcoder) cacheKey(file string) string {
+	key := filepath.Clean(file)
+	if t.forceReencode {
+		key += "\x00force-reencode"
+	}
+	return key
+}
+
 // browserCachePath returns the path of the remuxed MP4 for file: a stable name
 // derived from its absolute path, so concurrent requests for the same lesson
 // share one job and a finished conversion is reused on the next play.
 func (t *Transcoder) browserCachePath(file string) string {
-	sum := sha1.Sum([]byte(filepath.Clean(file)))
+	sum := sha1.Sum([]byte(t.cacheKey(file)))
 	return filepath.Join(t.CacheDir(), browserCacheSubdir, fmt.Sprintf("%x.mp4", sum))
 }
 
@@ -1023,9 +1069,12 @@ func ffmpegStaticAssets() (string, string) {
 }
 
 // downloadFFmpeg fetches the static ffmpeg (and ffprobe) build for this platform
-// once and saves them into cacheDir/ffmpeg. A previously downloaded copy is reused
-// without hitting the network again. A missing ffprobe download is not fatal: the
-// caller falls back to "ffmpeg -i" for probing.
+// once and saves them into cacheDir/ffmpeg. A previously downloaded copy is only
+// reused when it actually starts: an interrupted download leaves a truncated file
+// that looks complete to os.Stat, and the OS refuses to execute half a binary -
+// which used to silently disable every conversion until the cache was deleted by
+// hand. A missing or broken ffprobe is not fatal: the caller falls back to
+// "ffmpeg -i" for probing.
 func (t *Transcoder) downloadFFmpeg() (string, string, error) {
 	ffmpegAsset, ffprobeAsset := ffmpegStaticAssets()
 	if ffmpegAsset == "" {
@@ -1047,16 +1096,34 @@ func (t *Transcoder) downloadFFmpeg() (string, string, error) {
 		}
 	}
 
-	if _, err := os.Stat(ffmpegPath); err == nil {
+	// A copy from an earlier run is trusted only when it starts ("-version"
+	// prints its banner and exits). Anything else - a half downloaded file, a
+	// wrong architecture - is thrown away and fetched again.
+	if binaryRuns(ffmpegPath) {
+		if !binaryRuns(ffprobePath) {
+			ffprobePath = "" // probe falls back to "ffmpeg -i"
+		}
 		return ffmpegPath, ffprobePath, nil
+	}
+	if _, err := os.Stat(ffmpegPath); err == nil {
+		logf("transcoder: the cached ffmpeg does not run, downloading it again...")
+		_ = os.Remove(ffmpegPath)
 	}
 
 	logf("transcoder: downloading ffmpeg for local playback (one time)...")
 	if err := downloadFile(ffmpegStaticBase+"/"+ffmpegAsset, ffmpegPath); err != nil {
 		return "", "", err
 	}
+	if !binaryRuns(ffmpegPath) {
+		_ = os.Remove(ffmpegPath)
+		return "", "", fmt.Errorf("the downloaded ffmpeg does not run on this system")
+	}
 	if ffprobePath != "" {
-		if err := downloadFile(ffmpegStaticBase+"/"+ffprobeAsset, ffprobePath); err != nil {
+		if err := downloadFile(ffmpegStaticBase+"/"+ffprobeAsset, ffprobePath); err != nil || !binaryRuns(ffprobePath) {
+			if err == nil {
+				_ = os.Remove(ffprobePath)
+				err = fmt.Errorf("the downloaded ffprobe does not run")
+			}
 			logf("transcoder: ffprobe download failed, falling back to ffmpeg -i: %v", err)
 			ffprobePath = ""
 		}
@@ -1064,8 +1131,22 @@ func (t *Transcoder) downloadFFmpeg() (string, string, error) {
 	return ffmpegPath, ffprobePath, nil
 }
 
-// downloadFile streams url into dest, creating (or truncating) the file and making
-// it executable on non-Windows platforms.
+// binaryRuns reports whether the program at path starts and answers "-version".
+// An empty path or a file the OS refuses to execute both count as "no".
+func binaryRuns(path string) bool {
+	if path == "" {
+		return false
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	return exec.CommandContext(ctx, path, "-version").Run() == nil
+}
+
+// downloadFile streams url into dest, making it executable on non-Windows
+// platforms. The bytes go into a temporary file first and are only renamed into
+// place once the whole body arrived and matches the announced length: a
+// connection that drops halfway must never leave a truncated binary at dest,
+// where the next start would happily reuse it.
 func downloadFile(url, dest string) error {
 	request, err := http.NewRequest(http.MethodGet, url, nil)
 	if err != nil {
@@ -1080,21 +1161,33 @@ func downloadFile(url, dest string) error {
 	if response.StatusCode != http.StatusOK {
 		return fmt.Errorf("download returned HTTP %d", response.StatusCode)
 	}
-	out, err := os.OpenFile(dest, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o755)
+	partial := dest + ".part"
+	out, err := os.OpenFile(partial, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o755)
 	if err != nil {
 		return err
 	}
-	if _, err := io.Copy(out, response.Body); err != nil {
-		out.Close()
-		return err
+	written, copyErr := io.Copy(out, response.Body)
+	if copyErr == nil && response.ContentLength >= 0 && written != response.ContentLength {
+		copyErr = fmt.Errorf("only %d of %d bytes arrived", written, response.ContentLength)
 	}
-	if err := out.Close(); err != nil {
-		return err
+	if closeErr := out.Close(); copyErr == nil {
+		copyErr = closeErr
+	}
+	if copyErr != nil {
+		_ = os.Remove(partial)
+		return copyErr
 	}
 	if runtime.GOOS != "windows" {
-		if err := os.Chmod(dest, 0o755); err != nil {
+		if err := os.Chmod(partial, 0o755); err != nil {
+			_ = os.Remove(partial)
 			return err
 		}
+	}
+	// Windows refuses to rename onto an existing file.
+	_ = os.Remove(dest)
+	if err := os.Rename(partial, dest); err != nil {
+		_ = os.Remove(partial)
+		return err
 	}
 	return nil
 }
