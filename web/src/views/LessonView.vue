@@ -52,12 +52,14 @@ const playbackRate = ref(parseFloat(readPreference(RATE_KEY, '1')) || 1)
 // to be re-encoded piece by piece - the one thing a low powered NAS cannot do
 // smoothly. The device (a TV, a box, Kodi) decodes it itself, so casting is the
 // better answer, and the lesson view says so.
-const suggestCast = computed(
-  () =>
-    Boolean(mediaStatus.value?.needs_reencode) &&
-    payload.value?.dlna_enabled !== false &&
-    !activeCast.value
-)
+const suggestCast = computed(() => {
+  const mode = mediaStatus.value?.mode
+  // Only when the lesson really goes through the transcoder. A file that is
+  // served as it is (or a WebM the browser decodes itself) needs no advice,
+  // even when its codec is not one HLS could copy.
+  if (mode !== 'hls' && mode !== 'remux') return false
+  return Boolean(mediaStatus.value?.needs_reencode) && payload.value?.dlna_enabled !== false && !activeCast.value
+})
 
 function openCastMenu() {
   castMenu.value?.openMenu()

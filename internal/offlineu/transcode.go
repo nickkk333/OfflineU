@@ -692,6 +692,69 @@ func containerMime(format string) string {
 	return ""
 }
 
+// Streams a browser decodes, per container. The container alone is not enough
+// to decide whether a file can be handed over as it is: an .mp4 holding HEVC
+// (or a WebM holding something exotic) looks fine by name and still fails to
+// decode, which used to show up as "the file simply does not play".
+var (
+	mp4VideoCodecs  = []string{"h264", "av1"}
+	mp4AudioCodecs  = []string{"aac", "mp3", "opus", "flac", "alac"}
+	webmVideoCodecs = []string{"vp8", "vp9", "av1"}
+	webmAudioCodecs = []string{"opus", "vorbis"}
+	oggVideoCodecs  = []string{"theora", "vp8"}
+	oggAudioCodecs  = []string{"vorbis", "opus", "flac"}
+)
+
+// browserCodecs returns the MIME, and the video and audio codecs a browser
+// decodes inside it, for one probed container. An empty MIME means the
+// container is not one browsers play at all.
+//
+// ffprobe reports WebM and Matroska under the same name ("matroska,webm"), so
+// the two are told apart by their streams: VP8/VP9/AV1 means a browser can play
+// it, an H.264 stream inside that container cannot be served as WebM.
+func browserCodecs(container string) (mime string, video, audio []string) {
+	switch {
+	case strings.Contains(container, "webm"), strings.Contains(container, "matroska"):
+		return "video/webm", webmVideoCodecs, webmAudioCodecs
+	case strings.Contains(container, "ogg"):
+		return "video/ogg", oggVideoCodecs, oggAudioCodecs
+	case isMP4Family(container):
+		return "video/mp4", mp4VideoCodecs, mp4AudioCodecs
+	}
+	return "", nil, nil
+}
+
+func isMP4Family(container string) bool {
+	for _, marker := range []string{"mp4", "mov", "m4v", "quicktime", "3gp", "mj2"} {
+		if strings.Contains(container, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+// browserPlayable reports the MIME the file can be served with as it is, or ""
+// when a browser cannot decode it. Both the container and the streams have to
+// fit - that is what keeps an HEVC .mp4 from being handed over untouched.
+func browserPlayable(container string, info MediaInfo) string {
+	mime, video, audio := browserCodecs(container)
+	if mime == "" {
+		return ""
+	}
+	// A file whose streams could not be read is not handed over on the strength
+	// of its container name alone.
+	if !info.HasVideo() && info.AudioCodec == "" {
+		return ""
+	}
+	if info.HasVideo() && !codecIn(info.VideoCodec, video) {
+		return ""
+	}
+	if info.AudioCodec != "" && !codecIn(info.AudioCodec, audio) {
+		return ""
+	}
+	return mime
+}
+
 // realContainer reports the actual container of a file, independent of its
 // (possibly lying) extension. It answers from the cached probe, so what used to
 // be one ffprobe process per request is now one per file. An empty result means
@@ -1062,12 +1125,11 @@ func (t *Transcoder) ServeBrowser(w http.ResponseWriter, r *http.Request, file s
 		// caller serve the raw bytes.
 		return false
 	}
-	if browserFriendlyContainer(facts.Container) {
-		if mime := containerMime(facts.Container); mime != "" {
-			serveCourseFile(w, r, file, mime)
-			return true
-		}
-		return false
+	// Only a file the browser can really decode is handed over untouched -
+	// an .mp4 holding HEVC would otherwise be served as-is and fail to play.
+	if mime := browserPlayable(facts.Container, facts.Info); mime != "" {
+		serveCourseFile(w, r, file, mime)
+		return true
 	}
 	if !t.Available() {
 		return false

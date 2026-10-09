@@ -37,3 +37,35 @@ func TestContainerMime(t *testing.T) {
 		}
 	}
 }
+
+// The container alone cannot decide: an .mp4 holding HEVC looks fine and still
+// fails to decode, and a WebM (which ffprobe reports as "matroska,webm") holding
+// VP9 is playable even though the container name says otherwise.
+func TestBrowserPlayableNeedsContainerAndStreams(t *testing.T) {
+	cases := []struct {
+		container string
+		info      MediaInfo
+		want      string
+	}{
+		{"mov,mp4,m4a,3gp,3g2,mj2", MediaInfo{VideoCodec: "h264", AudioCodec: "aac"}, "video/mp4"},
+		{"mp4", MediaInfo{VideoCodec: "h264", AudioCodec: "mp3"}, "video/mp4"},
+		// The case that used to be served untouched and simply did not play.
+		{"mp4", MediaInfo{VideoCodec: "hevc", AudioCodec: "aac"}, ""},
+		{"mp4", MediaInfo{VideoCodec: "h264", AudioCodec: "ac3"}, ""},
+		// WebM and Matroska share one container name: their streams tell them apart.
+		{"matroska,webm", MediaInfo{VideoCodec: "vp9", AudioCodec: "opus"}, "video/webm"},
+		{"matroska,webm", MediaInfo{VideoCodec: "vp8", AudioCodec: "vorbis"}, "video/webm"},
+		{"matroska,webm", MediaInfo{VideoCodec: "h264", AudioCodec: "aac"}, ""},
+		{"ogg", MediaInfo{VideoCodec: "theora", AudioCodec: "vorbis"}, "video/ogg"},
+		// Containers no browser plays at all.
+		{"mpegts", MediaInfo{VideoCodec: "h264", AudioCodec: "aac"}, ""},
+		{"avi", MediaInfo{VideoCodec: "h264", AudioCodec: "aac"}, ""},
+		// A file whose streams could not be read is not handed over either.
+		{"mp4", MediaInfo{}, ""},
+	}
+	for _, testCase := range cases {
+		if got := browserPlayable(testCase.container, testCase.info); got != testCase.want {
+			t.Errorf("browserPlayable(%q, %+v) = %q, want %q", testCase.container, testCase.info, got, testCase.want)
+		}
+	}
+}

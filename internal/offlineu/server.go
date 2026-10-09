@@ -1372,7 +1372,7 @@ func (a *App) handleMediaStatus(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case err != nil || facts.Container == "":
 			status.Mode = "raw"
-		case browserFriendlyContainer(facts.Container):
+		case browserPlayable(facts.Container, facts.Info) != "":
 			status.Mode = "direct"
 		case !a.Transcoder.Available():
 			status.Mode = "raw"
