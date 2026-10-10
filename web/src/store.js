@@ -23,13 +23,7 @@ export const store = reactive({
   // Whether the process may bypass file permission checks (CAP_DAC_OVERRIDE of
   // /app/offlineu-cap): true/false inside a Linux container, null where the
   // question cannot be answered at all (desktop build, no /proc).
-  readCapability: null,
-  // Global "when the lesson ends" settings (once / loop / next) - one for the
-  // browser player, one for a cast. The server keeps both, so a new browser -
-  // or one with a cleared cache - shows the same choices. They are independent:
-  // the two can play at the same time, so one never changes the other.
-  playMode: '',
-  castPlayMode: ''
+  readCapability: null
 })
 
 function applyState(payload) {
@@ -46,8 +40,6 @@ function applyState(payload) {
   store.mountHint = payload.mount_hint || ''
   // Only a plain false means "this container switched the capability off".
   store.readCapability = payload.read_capability === undefined ? null : payload.read_capability
-  store.playMode = payload.play_mode || ''
-  store.castPlayMode = payload.cast_play_mode || ''
   store.loaded = true
 }
 

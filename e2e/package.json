@@ -2,7 +2,7 @@
   "name": "offlineu-e2e",
   "private": true,
   "type": "module",
-  "description": "End-to-end scenarios for 单播循环 / 单播不循环 / 连播 in the browser and while casting.",
+  "description": "End-to-end scenarios for 连播 (every lesson continues with the next one) in the browser and while casting.",
   "scripts": {
     "api": "node api.mjs",
     "browser": "node browser.mjs",

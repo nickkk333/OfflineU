@@ -97,8 +97,6 @@ func (a *App) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		a.handleDLNASession(w, r)
 	case requestPath == "/api/dlna/control":
 		a.handleDLNAControl(w, r)
-	case requestPath == "/api/settings":
-		a.handleSettings(w, r)
 	case requestPath == "/api/media/status":
 		a.handleMediaStatus(w, r)
 	case requestPath == "/api/hls/playlist" || requestPath == "/api/hls/playlist.m3u8":
@@ -228,8 +226,6 @@ func (a *App) handleState(w http.ResponseWriter, r *http.Request) {
 			"roots_detail":    a.Config.RootStatuses(),
 			"mount_hint":      MountHintFor(requestLanguage(r)),
 			"dlna_enabled":    a.Config.DLNAEnabled,
-			"play_mode":       a.Store.PlayMode(),
-			"cast_play_mode":  a.Store.CastPlayMode(),
 		})
 		return
 	}
@@ -250,8 +246,6 @@ func (a *App) handleState(w http.ResponseWriter, r *http.Request) {
 		"roots_detail":    a.Config.RootStatuses(),
 		"mount_hint":      MountHintFor(requestLanguage(r)),
 		"dlna_enabled":    a.Config.DLNAEnabled,
-		"play_mode":       a.Store.PlayMode(),
-		"cast_play_mode":  a.Store.CastPlayMode(),
 	})
 }
 
@@ -740,8 +734,6 @@ func (a *App) handleDLNACast(w http.ResponseWriter, r *http.Request) {
 		LessonPath   string  `json:"lesson_path"`
 		StartSeconds *int    `json:"start_seconds"`
 		Transcode    string  `json:"transcode"` // "auto" (default), "on" or "off"
-		PlayMode     string  `json:"play_mode"` // "once" (default), "loop" or "next"
-		Autoplay     *bool   `json:"autoplay"`  // legacy: true = "next", false = "once"
 		Duration     float64 `json:"duration"`  // length the browser worked out (optional)
 	}
 	if err := decodeJSON(r, &payload); err != nil {
@@ -793,23 +785,8 @@ func (a *App) handleDLNACast(w http.ResponseWriter, r *http.Request) {
 		logf("dlna: cannot record the cast: %v", err)
 	}
 
-	// What happens when the lesson ends: the new play_mode wins, the legacy
-	// autoplay boolean still maps onto it, and nothing at all means "once"
-	// (stop when the lesson is over).
-	playMode := PlayModeOnce
-	switch {
-	case strings.TrimSpace(payload.PlayMode) != "":
-		playMode = normalizePlayMode(payload.PlayMode)
-	case payload.Autoplay != nil && *payload.Autoplay:
-		playMode = PlayModeNext
-	}
-
-	// Remember what is playing: the browser shows the position and the
-	// watchdog applies the play mode when this lesson ends.
-	// A cast remembers its own mode: what was picked here is the cast setting,
-	// not the one the browser player uses.
-	a.Store.SetCastPlayMode(playMode)
-
+	// Remember what is playing: the browser shows the position and the watchdog
+	// hands the device the next lesson when this one ends.
 	session := &CastSession{
 		UDN:          renderer.UDN,
 		Device:       renderer.DisplayName(),
@@ -819,7 +796,6 @@ func (a *App) handleDLNACast(w http.ResponseWriter, r *http.Request) {
 		LessonTitle:  lesson.Title,
 		BaseURL:      baseURL,
 		Converted:    target.Converted,
-		PlayMode:     playMode,
 		MediaFile:    a.mediaFileFor(course, lesson),
 		StartSeconds: float64(startSeconds),
 		Duration:     a.castDuration(course, lesson, payload.Duration),
@@ -1159,60 +1135,6 @@ func (a *App) handleDLNAControl(w http.ResponseWriter, r *http.Request) {
 		"device":  renderer.DisplayName(),
 		"action":  action,
 		"session": a.castSnapshot(),
-	})
-}
-
-// handleSettings stores a client setting on the server, which is what makes it
-// global: the choice is kept next to the course bookkeeping (state file) and
-// handed to every browser through /api/state, so a new browser, another machine
-// or a cleared cache still shows what was picked last.
-//
-// play_mode also drives the cast that is running right now: it is NOT frozen at
-// the moment the cast starts, so switching 单播循环 / 单播不循环 / 连播 while the TV is
-// playing takes effect - and a cast that already stopped in "once" mode is woken
-// up again when the new mode wants more. Unlike /api/dlna/control this does not
-// look the device up on the network first: the watchdog applies the mode, so a
-// TV that is slow to answer must not make the switch fail.
-func (a *App) handleSettings(w http.ResponseWriter, r *http.Request) {
-	if !requireMethod(w, r, http.MethodPost) {
-		return
-	}
-	var payload struct {
-		Device       string `json:"device"`         // optional: only to be sure which device is meant
-		PlayMode     string `json:"play_mode"`      // browser player: "once", "loop" or "next"
-		CastPlayMode string `json:"cast_play_mode"` // cast on a renderer
-	}
-	if err := decodeJSON(r, &payload); err != nil {
-		writeError(w, http.StatusBadRequest, "play_mode or cast_play_mode is required")
-		return
-	}
-	wantsLocal := strings.TrimSpace(payload.PlayMode) != ""
-	wantsCast := strings.TrimSpace(payload.CastPlayMode) != ""
-	if !wantsLocal && !wantsCast {
-		writeError(w, http.StatusBadRequest, "play_mode or cast_play_mode is required")
-		return
-	}
-
-	// The browser player and the cast keep their own choice: setting one never
-	// touches the other.
-	if wantsLocal {
-		a.Store.SetPlayMode(payload.PlayMode)
-	}
-	castMode := ""
-	if wantsCast {
-		castMode = a.Store.SetCastPlayMode(payload.CastPlayMode)
-		// A running cast picks the new mode up at once - no need to start again.
-		if session := a.currentCast(); session != nil {
-			if device := strings.TrimSpace(payload.Device); device == "" || device == session.UDN {
-				a.setPlayMode(session, castMode)
-			}
-		}
-	}
-	writeJSON(w, http.StatusOK, map[string]any{
-		"success":        true,
-		"play_mode":      a.Store.PlayMode(),
-		"cast_play_mode": a.Store.CastPlayMode(),
-		"session":        a.castSnapshot(),
 	})
 }
 

@@ -142,9 +142,6 @@ func TestCastRegistersASession(t *testing.T) {
 	if session.LessonPath != "Section 1/01 - Intro.mp4" {
 		t.Errorf("lesson = %q", session.LessonPath)
 	}
-	if session.PlayMode != PlayModeOnce {
-		t.Errorf("play mode = %q, want the default %q", session.PlayMode, PlayModeOnce)
-	}
 
 	payload := struct {
 		Session CastSessionView `json:"session"`
@@ -168,7 +165,6 @@ func TestWatchdogContinuesWithTheNextLesson(t *testing.T) {
 	response := env.request(http.MethodPost, "/api/dlna/cast", map[string]any{
 		"device":      "uuid:fake-renderer",
 		"lesson_path": "Section 1/01 - Intro.mp4",
-		"play_mode":   PlayModeNext,
 	})
 	if response.Code != http.StatusOK {
 		t.Fatalf("status = %d %s", response.Code, response.Body.String())
@@ -228,7 +224,6 @@ func TestSessionFollowsTheLessonTheWatchdogStarted(t *testing.T) {
 		"device":      "uuid:fake-renderer",
 		"lesson_path": "Section 1/01 - Intro.mp4",
 		"duration":    60,
-		"play_mode":   PlayModeNext,
 	}); response.Code != http.StatusOK {
 		t.Fatalf("status = %d %s", response.Code, response.Body.String())
 	}
@@ -289,7 +284,6 @@ func TestWatchdogStopsAfterTheLastLesson(t *testing.T) {
 	if response := env.request(http.MethodPost, "/api/dlna/cast", map[string]any{
 		"device":      "uuid:fake-renderer",
 		"lesson_path": "Section 1/06 - Wrap Up.mp4",
-		"play_mode":   PlayModeNext,
 	}); response.Code != http.StatusOK {
 		t.Fatalf("status = %d %s", response.Code, response.Body.String())
 	}
@@ -732,9 +726,10 @@ func TestNextPlayableLessonSkipsDocuments(t *testing.T) {
 	}
 }
 
-// The product default is "once": nothing is sent, so the cast stops when the
-// lesson is over (but the finished run still counts as completed).
-func TestCastStopsWhenTheLessonEndsByDefault(t *testing.T) {
+// A cast always carries on: nothing has to be sent for it, the watchdog simply
+// hands the device the next playable lesson when this one is over (and the
+// finished run still counts as completed).
+func TestCastContinuesWithTheNextLessonByDefault(t *testing.T) {
 	env := newTestEnv(t)
 	env.loadCourse()
 	fake := newFakeRenderer(t)
@@ -748,17 +743,17 @@ func TestCastStopsWhenTheLessonEndsByDefault(t *testing.T) {
 	}
 	session := env.app.currentCast()
 	t.Cleanup(func() { env.app.endCast(session) })
-	if session.PlayMode != PlayModeOnce {
-		t.Fatalf("play mode = %q, want the default %q", session.PlayMode, PlayModeOnce)
-	}
 	session.Duration = 60
 	session.StartedAt = time.Now().Add(-61 * time.Second)
 
-	if env.app.castTick(session) {
-		t.Error("the default mode must stop when the lesson ends")
+	if !env.app.castTick(session) {
+		t.Fatal("the cast must carry on with the next lesson")
 	}
-	if session.State != CastStateEnded {
-		t.Errorf("state = %q, want %q", session.State, CastStateEnded)
+	if session.LessonPath != "Section 1/06 - Wrap Up.mp4" {
+		t.Errorf("the session did not move on: %q", session.LessonPath)
+	}
+	if session.State != CastStatePlaying {
+		t.Errorf("state = %q, want %q", session.State, CastStatePlaying)
 	}
 	stored := struct {
 		Completed       bool `json:"completed"`
@@ -767,91 +762,6 @@ func TestCastStopsWhenTheLessonEndsByDefault(t *testing.T) {
 	env.decodeRaw(env.progressJSON()["Section 1/01 - Intro.mp4"], &stored)
 	if !stored.Completed || stored.ProgressSeconds != 60 {
 		t.Errorf("the finished run was not stored: %+v", stored)
-	}
-}
-
-// "loop" hands the very same lesson back to the device from the start and the
-// watchdog keeps watching it.
-func TestCastPlayModeLoopRestartsTheSameLesson(t *testing.T) {
-	env := newTestEnv(t)
-	env.loadCourse()
-	fake := newFakeRenderer(t)
-	seedRenderers(env.app.DLNA, fake.renderer(t))
-
-	response := env.request(http.MethodPost, "/api/dlna/cast", map[string]any{
-		"device":      "uuid:fake-renderer",
-		"lesson_path": "Section 1/01 - Intro.mp4",
-		"play_mode":   PlayModeLoop,
-	})
-	if response.Code != http.StatusOK {
-		t.Fatalf("status = %d %s", response.Code, response.Body.String())
-	}
-	session := env.app.currentCast()
-	t.Cleanup(func() { env.app.endCast(session) })
-	if session.PlayMode != PlayModeLoop {
-		t.Fatalf("play mode = %q, want %q", session.PlayMode, PlayModeLoop)
-	}
-	session.Duration = 60
-	session.StartedAt = time.Now().Add(-61 * time.Second)
-
-	if !env.app.castTick(session) {
-		t.Fatal("looping must keep the watchdog running")
-	}
-	if session.LessonPath != "Section 1/01 - Intro.mp4" {
-		t.Errorf("loop must stay on the lesson, got %q", session.LessonPath)
-	}
-	if session.State != CastStatePlaying || session.StartSeconds != 0 {
-		t.Errorf("session = %+v", session)
-	}
-	// The run that just finished counts as completed before the repeat starts.
-	stored := struct {
-		Completed       bool `json:"completed"`
-		ProgressSeconds int  `json:"progress_seconds"`
-	}{}
-	env.decodeRaw(env.progressJSON()["Section 1/01 - Intro.mp4"], &stored)
-	if !stored.Completed || stored.ProgressSeconds != 60 {
-		t.Errorf("progress of the finished run = %+v", stored)
-	}
-	// Initial push + the restart.
-	setURI := 0
-	for _, action := range fake.recorded() {
-		if action == "SetAVTransportURI" {
-			setURI++
-		}
-	}
-	if setURI != 2 {
-		t.Errorf("expected two SetAVTransportURI calls (the lesson and its repeat), got %v", fake.recorded())
-	}
-}
-
-// 单播不循环: when the lesson is over the cast really ends - the device is told
-// to stop instead of being left at the end of the file.
-func TestCastInOnceModeStopsTheDevice(t *testing.T) {
-	env := newTestEnv(t)
-	env.loadCourse()
-	fake := newFakeRenderer(t)
-	seedRenderers(env.app.DLNA, fake.renderer(t))
-
-	if response := env.request(http.MethodPost, "/api/dlna/cast", map[string]any{
-		"device":      "uuid:fake-renderer",
-		"lesson_path": "Section 1/01 - Intro.mp4",
-		"play_mode":   PlayModeOnce,
-	}); response.Code != http.StatusOK {
-		t.Fatalf("status = %d %s", response.Code, response.Body.String())
-	}
-	session := env.app.currentCast()
-	t.Cleanup(func() { env.app.endCast(session) })
-	session.Duration = 60
-	session.StartedAt = time.Now().Add(-61 * time.Second)
-
-	if env.app.castTick(session) {
-		t.Error("the cast should be over when the lesson ends")
-	}
-	if session.State != CastStateEnded {
-		t.Errorf("state = %q", session.State)
-	}
-	if countOf(fake.recorded(), "Stop") != 1 {
-		t.Errorf("the device was not stopped: %v", fake.recorded())
 	}
 }
 
@@ -886,7 +796,7 @@ func TestCastSendsSubtitlesInDIDL(t *testing.T) {
 	}
 }
 
-// The last lesson of a course ends the cast the same way, in 连播 as well.
+// The last lesson of a course ends the cast: there is nothing left to play.
 func TestCastStopsTheDeviceAfterTheLastLesson(t *testing.T) {
 	env := newTestEnv(t)
 	env.loadCourse()
@@ -896,7 +806,6 @@ func TestCastStopsTheDeviceAfterTheLastLesson(t *testing.T) {
 	if response := env.request(http.MethodPost, "/api/dlna/cast", map[string]any{
 		"device":      "uuid:fake-renderer",
 		"lesson_path": "Section 1/06 - Wrap Up.mp4",
-		"play_mode":   PlayModeNext,
 	}); response.Code != http.StatusOK {
 		t.Fatalf("status = %d %s", response.Code, response.Body.String())
 	}
@@ -910,198 +819,5 @@ func TestCastStopsTheDeviceAfterTheLastLesson(t *testing.T) {
 	}
 	if countOf(fake.recorded(), "Stop") != 1 {
 		t.Errorf("the device was not stopped after the last lesson: %v", fake.recorded())
-	}
-}
-
-// The mode is a live setting: switching it while the TV is playing has to reach
-// the watchdog, which is the part that actually applies it.
-func TestPlayModeCanBeChangedWhileTheCastRuns(t *testing.T) {
-	env := newTestEnv(t)
-	env.loadCourse()
-	fake := newFakeRenderer(t)
-	seedRenderers(env.app.DLNA, fake.renderer(t))
-
-	if response := env.request(http.MethodPost, "/api/dlna/cast", map[string]any{
-		"device":      "uuid:fake-renderer",
-		"lesson_path": "Section 1/01 - Intro.mp4",
-	}); response.Code != http.StatusOK {
-		t.Fatalf("status = %d %s", response.Code, response.Body.String())
-	}
-	session := env.app.currentCast()
-	t.Cleanup(func() { env.app.endCast(session) })
-	if session.PlayMode != PlayModeOnce {
-		t.Fatalf("play mode = %q, want %q", session.PlayMode, PlayModeOnce)
-	}
-
-	response := env.request(http.MethodPost, "/api/settings", map[string]any{
-		"device":         "uuid:fake-renderer",
-		"cast_play_mode": PlayModeNext,
-	})
-	if response.Code != http.StatusOK {
-		t.Fatalf("status = %d %s", response.Code, response.Body.String())
-	}
-	if session.PlayMode != PlayModeNext {
-		t.Errorf("the running cast did not pick the mode up: %q", session.PlayMode)
-	}
-	view := env.app.castSnapshot()
-	if view.PlayMode != PlayModeNext {
-		t.Errorf("the browser does not see the new mode: %q", view.PlayMode)
-	}
-
-	// And it is the new mode that decides what happens at the end.
-	session.Duration = 60
-	session.StartedAt = time.Now().Add(-61 * time.Second)
-	if !env.app.castTick(session) {
-		t.Fatal("the watchdog should keep watching after handing over")
-	}
-	if session.LessonPath != "Section 1/06 - Wrap Up.mp4" {
-		t.Errorf("the cast did not continue: %q", session.LessonPath)
-	}
-}
-
-// A cast that already stopped ("once" ended it) has to wake up again when the
-// user switches to 循环/连播 - before, the watchdog was gone for good.
-func TestPlayModeWakesAnEndedCastUpAgain(t *testing.T) {
-	env := newTestEnv(t)
-	env.loadCourse()
-	fake := newFakeRenderer(t)
-	seedRenderers(env.app.DLNA, fake.renderer(t))
-
-	if response := env.request(http.MethodPost, "/api/dlna/cast", map[string]any{
-		"device":      "uuid:fake-renderer",
-		"lesson_path": "Section 1/01 - Intro.mp4",
-	}); response.Code != http.StatusOK {
-		t.Fatalf("status = %d %s", response.Code, response.Body.String())
-	}
-	session := env.app.currentCast()
-	t.Cleanup(func() { env.app.endCast(session) })
-	session.Duration = 60
-	session.StartedAt = time.Now().Add(-61 * time.Second)
-	if env.app.castTick(session) {
-		t.Fatal("the default mode should stop when the lesson ends")
-	}
-	if session.State != CastStateEnded {
-		t.Fatalf("state = %q", session.State)
-	}
-	setURI := countOf(fake.recorded(), "SetAVTransportURI")
-	stops := countOf(fake.recorded(), "Stop")
-
-	if response := env.request(http.MethodPost, "/api/settings", map[string]any{
-		"cast_play_mode": PlayModeLoop,
-	}); response.Code != http.StatusOK {
-		t.Fatalf("status = %d %s", response.Code, response.Body.String())
-	}
-	if session.State == CastStateEnded {
-		t.Error("switching to loop must wake the cast up, not leave it ended")
-	}
-	// The next watchdog round repeats the lesson instead of staying dead.
-	if !env.app.castTick(session) {
-		t.Fatal("the woken up cast should keep watching")
-	}
-	if session.LessonPath != "Section 1/01 - Intro.mp4" {
-		t.Errorf("loop must stay on the lesson, got %q", session.LessonPath)
-	}
-	if countOf(fake.recorded(), "SetAVTransportURI") != setURI+1 {
-		t.Errorf("the lesson was not handed to the device again: %v", fake.recorded())
-	}
-	// The Stop above came from the "once" ending that is being undone here; the
-	// loop that follows must not stop the device again.
-	if countOf(fake.recorded(), "Stop") != stops+0 {
-		t.Errorf("a looping cast must not be stopped again: %v", fake.recorded())
-	}
-}
-
-// The setting is global: it is stored on the server, so another browser (or one
-// with a cleared cache) picks it up again through /api/state.
-func TestPlayModeIsRememberedOnTheServer(t *testing.T) {
-	env := newTestEnv(t)
-	env.loadCourse()
-
-	if response := env.request(http.MethodPost, "/api/settings", map[string]any{
-		"play_mode": PlayModeLoop,
-	}); response.Code != http.StatusOK {
-		t.Fatalf("status = %d %s", response.Code, response.Body.String())
-	}
-	state := struct {
-		PlayMode string `json:"play_mode"`
-	}{}
-	env.decode(env.request(http.MethodGet, "/api/state", nil), &state)
-	if state.PlayMode != PlayModeLoop {
-		t.Errorf("/api/state play_mode = %q, want %q", state.PlayMode, PlayModeLoop)
-	}
-
-	// A "new browser" (a fresh store pointed at the same bookkeeping file) sees
-	// the same choice - that is what survives a cleared cache.
-	reopened := NewCourseStoreWithStateFile(&env.cfg, env.app.Store.StateFile())
-	if reopened.PlayMode() != PlayModeLoop {
-		t.Errorf("after reopening: play mode = %q, want %q", reopened.PlayMode(), PlayModeLoop)
-	}
-}
-
-func TestPlayModeEndpointRejectsNonsense(t *testing.T) {
-	env := newTestEnv(t)
-	env.loadCourse()
-
-	fake := newFakeRenderer(t)
-	seedRenderers(env.app.DLNA, fake.renderer(t))
-	if response := env.request(http.MethodPost, "/api/dlna/cast", map[string]any{
-		"device":      "uuid:fake-renderer",
-		"lesson_path": "Section 1/01 - Intro.mp4",
-	}); response.Code != http.StatusOK {
-		t.Fatalf("status = %d %s", response.Code, response.Body.String())
-	}
-	session := env.app.currentCast()
-	t.Cleanup(func() { env.app.endCast(session) })
-
-	if response := env.request(http.MethodPost, "/api/settings", map[string]any{}); response.Code != http.StatusBadRequest {
-		t.Errorf("without a play_mode: status = %d, want 400", response.Code)
-	}
-	// A request about another device must not touch the running cast.
-	if response := env.request(http.MethodPost, "/api/settings", map[string]any{
-		"device":    "uuid:another-renderer",
-		"play_mode": PlayModeLoop,
-	}); response.Code != http.StatusOK {
-		t.Errorf("another device: status = %d %s", response.Code, response.Body.String())
-	}
-	if session.PlayMode != PlayModeOnce {
-		t.Errorf("the cast was switched although the device differs: %q", session.PlayMode)
-	}
-	// An unknown value falls back to the product default instead of sticking.
-	env.request(http.MethodPost, "/api/settings", map[string]any{"play_mode": "nonsense"})
-	if session.PlayMode != PlayModeOnce {
-		t.Errorf("play mode = %q, want %q", session.PlayMode, PlayModeOnce)
-	}
-}
-
-// The legacy autoplay boolean of /api/dlna/cast still maps onto the modes.
-func TestCastLegacyAutoplayBooleanMapsToPlayMode(t *testing.T) {
-	env := newTestEnv(t)
-	env.loadCourse()
-	fake := newFakeRenderer(t)
-	seedRenderers(env.app.DLNA, fake.renderer(t))
-
-	if response := env.request(http.MethodPost, "/api/dlna/cast", map[string]any{
-		"device":      "uuid:fake-renderer",
-		"lesson_path": "Section 1/01 - Intro.mp4",
-		"autoplay":    true,
-	}); response.Code != http.StatusOK {
-		t.Fatalf("status = %d", response.Code)
-	}
-	if mode := env.app.currentCast().PlayMode; mode != PlayModeNext {
-		t.Errorf("autoplay:true -> play mode %q, want %q", mode, PlayModeNext)
-	}
-
-	// beginCast replaces the running session, so a second request is enough.
-	if response := env.request(http.MethodPost, "/api/dlna/cast", map[string]any{
-		"device":      "uuid:fake-renderer",
-		"lesson_path": "Section 1/01 - Intro.mp4",
-		"autoplay":    false,
-	}); response.Code != http.StatusOK {
-		t.Fatalf("status = %d", response.Code)
-	}
-	session := env.app.currentCast()
-	t.Cleanup(func() { env.app.endCast(session) })
-	if session.PlayMode != PlayModeOnce {
-		t.Errorf("autoplay:false -> play mode %q, want %q", session.PlayMode, PlayModeOnce)
 	}
 }

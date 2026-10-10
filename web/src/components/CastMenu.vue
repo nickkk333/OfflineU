@@ -6,7 +6,6 @@ import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { api, formatTime, reloadPage } from '../api.js'
 import { t } from '../i18n.js'
 import { useToast } from '../composables/useToast.js'
-import { castPlayMode } from '../composables/usePlayMode.js'
 
 const props = defineProps({
   lesson: { type: Object, required: true },
@@ -120,17 +119,9 @@ async function cast(device) {
   busy.value = true
   try {
     const duration = await measureDuration()
-    const result = await api.castTo(
-      device.udn,
-      props.lesson.rel_path,
-      resumeAt.value,
-      compat.value,
-      // The cast keeps its own play mode (single-loop / single / continuous) -
-      // independent of the browser player's, and remembered on the server - so
-      // starting a cast must not pick up the browser's local choice.
-      castPlayMode.value,
-      duration
-    )
+    // The server carries on with the next lesson on its own - there is no
+    // play mode to hand over.
+    const result = await api.castTo(device.udn, props.lesson.rel_path, resumeAt.value, compat.value, duration)
     activeUDN.value = device.udn
     activeName.value = result.device || device.name
     storeDevice(device.udn)

@@ -10,7 +10,6 @@ import { refreshState, store } from '../store.js'
 import { t, translateServerMessage } from '../i18n.js'
 import { useToast } from '../composables/useToast.js'
 import { useCast } from '../composables/useCast.js'
-import { PLAY_MODES, playMode, setPlayMode as savePlayMode, applyPlayMode, applyCastPlayMode } from '../composables/usePlayMode.js'
 
 const route = useRoute()
 const router = useRouter()
@@ -78,13 +77,6 @@ const mediaError = ref('')
 let hlsPlayer = null
 let hlsRetryTimer = 0
 let remuxTimer = 0
-
-// What the *browser player* does when the lesson ends: its own global setting
-// (see usePlayMode.js). The cast keeps a separate one, so this never changes
-// what the TV does - even while both are playing.
-function setPlayMode(mode) {
-  savePlayMode(mode)
-}
 
 // The cast that is running on a TV: the browser follows it, and the server
 // pushes the next lesson when this one ends.
@@ -164,17 +156,6 @@ watch(activeCast, (data) => {
   if (media.currentTime > 0) save(media.currentTime)
   media.pause()
 })
-
-// A cast carries its own mode (the server applies it to the device): follow it
-// so the cast bar and this page show what the TV really does, without touching
-// the browser player's own choice.
-watch(
-  () => activeCast.value?.play_mode,
-  (mode) => {
-    if (mode === 'loop' || mode === 'once' || mode === 'next') applyCastPlayMode(mode)
-  },
-  { immediate: true }
-)
 
 const RATES = [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2]
 const isMedia = computed(() => Boolean(lesson.value && (lesson.value.video_file || lesson.value.audio_file)))
@@ -544,20 +525,11 @@ function onPause() {
   if (media && media.currentTime > 0) save(media.currentTime)
 }
 
+// A lesson always continues with the next one - there is no mode to pick.
 function onEnded() {
   const media = mediaEl.value
   save(media ? media.currentTime : 0, true)
   completed.value = true
-  if (playMode.value === 'loop') {
-    // Same lesson from the top. Seconds never move backwards in the store and
-    // the completion flag was just written, so a repeat cannot lose progress.
-    if (media) {
-      media.currentTime = 0
-      autoplay(media)
-    }
-    return
-  }
-  if (playMode.value !== 'next') return
   const href = payload.value && payload.value.autoplay_href
   if (href) {
     // ~1 s so the completion toast is readable before the next lesson loads
@@ -719,29 +691,10 @@ onBeforeUnmount(() => {
               <option v-for="rate in RATES" :key="rate" :value="rate">{{ rate }}×</option>
             </select>
           </label>
-          <div class="toolbar-field">
-            <span class="faint">{{ t('lesson.whenFinished') }}</span>
-            <div class="seg" role="radiogroup" :aria-label="t('lesson.whenFinished')">
-              <button
-                v-for="mode in PLAY_MODES"
-                :key="mode.id"
-                type="button"
-                class="seg__btn"
-                :class="{ 'seg__btn--active': playMode === mode.id }"
-                role="radio"
-                :aria-checked="playMode === mode.id"
-                :title="t(mode.title)"
-                @click="setPlayMode(mode.id)"
-              >
-                {{ t(mode.label) }}
-              </button>
-            </div>
-          </div>
-          <span v-if="playMode === 'loop'" class="faint">{{ t('lesson.loopHint') }}</span>
-          <span v-else-if="playMode === 'next' && payload.autoplay_title" class="faint">
+          <span v-if="payload.autoplay_title" class="faint">
             {{ t('lesson.upNext') }} <strong>{{ payload.autoplay_title }}</strong>
           </span>
-          <span v-else-if="playMode === 'next'" class="faint">{{ t('lesson.lastLesson') }}</span>
+          <span v-else class="faint">{{ t('lesson.lastLesson') }}</span>
         </div>
 
         <div v-if="suggestCast" class="banner banner--tip">
@@ -924,41 +877,6 @@ onBeforeUnmount(() => {
   cursor: pointer;
   user-select: none;
   font-size: 0.9rem;
-}
-
-/* Segmented control for the play mode (loop / once / next) --------------- */
-.seg {
-  display: inline-flex;
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  overflow: hidden;
-  background: var(--surface-strong);
-}
-
-.seg__btn {
-  padding: 6px 12px;
-  background: none;
-  border: none;
-  border-right: 1px solid var(--border);
-  color: var(--text-muted);
-  font-size: 0.85rem;
-  cursor: pointer;
-  transition: all var(--transition);
-}
-
-.seg__btn:last-child {
-  border-right: none;
-}
-
-.seg__btn:hover {
-  color: var(--text);
-  background: rgba(255, 255, 255, 0.06);
-}
-
-.seg__btn--active {
-  background: var(--accent-soft);
-  color: var(--text);
-  font-weight: 600;
 }
 
 .toolbar-check input {

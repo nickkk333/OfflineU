@@ -23,27 +23,6 @@ const (
 	CastStateEnded   CastState = "ended"
 )
 
-// Play modes shared by the browser player and the cast watchdog: what happens
-// when the current lesson reaches its end.
-const (
-	PlayModeOnce = "once" // stop after this lesson (default)
-	PlayModeLoop = "loop" // start the same lesson again
-	PlayModeNext = "next" // continue with the next playable lesson
-)
-
-// normalizePlayMode maps anything the client sent to one of the three modes;
-// an unknown or empty value falls back to "once" (the product default).
-func normalizePlayMode(value string) string {
-	switch value {
-	case PlayModeLoop:
-		return PlayModeLoop
-	case PlayModeNext:
-		return PlayModeNext
-	default:
-		return PlayModeOnce
-	}
-}
-
 // Tuning of the cast watchdog.
 const (
 	castPollInterval   = 3 * time.Second  // how often the device is asked where it is
@@ -63,7 +42,6 @@ type CastSession struct {
 	LessonTitle string
 	BaseURL     string // scheme + host, so the watchdog can build URLs too
 	Converted   bool
-	PlayMode    string // "once" (default), "loop" or "next"
 	MediaFile   string // absolute path of the file being played
 
 	StartSeconds float64   // resume position the cast started from
@@ -202,7 +180,6 @@ type CastSessionView struct {
 	Duration       float64 `json:"duration"`
 	State          string  `json:"state"`
 	Converted      bool    `json:"converted"`
-	PlayMode       string  `json:"play_mode"`          // "once" (default), "loop" or "next"
 	Reported       bool    `json:"reported"`           // the device told us, not the clock
 	Subtitle       bool    `json:"subtitle,omitempty"` // the cast carries captions
 	NextTitle      string  `json:"next_title,omitempty"`
@@ -225,38 +202,6 @@ func (a *App) beginCast(session *CastSession) {
 	session.watching = true
 	a.cast.mutex.Unlock()
 	go a.watchCast(session)
-}
-
-// setPlayMode changes what happens when the lesson ends - while the cast is
-// running, which is the whole point: the mode is a live setting and not
-// something only the next cast can pick up.
-//
-// A session whose watchdog already gave up (the lesson ran out in "once" mode)
-// is woken up again when the new mode asks for more: the next watchdog round
-// sees the finished lesson and hands the device the repeat or the next lesson.
-func (a *App) setPlayMode(session *CastSession, mode string) {
-	if session == nil {
-		return
-	}
-	mode = normalizePlayMode(mode)
-	a.cast.mutex.Lock()
-	session.PlayMode = mode
-	if session.State == CastStateEnded && mode != PlayModeOnce {
-		// Forget what the device said about the run that just ended, otherwise
-		// the repeat would look finished the moment it starts.
-		session.State = CastStatePlaying
-		session.RealPosition = 0
-		session.RealAt = time.Time{}
-		session.RealState = ""
-	}
-	wake := !session.watching && !session.stopped && a.cast.session == session
-	if wake {
-		session.watching = true
-	}
-	a.cast.mutex.Unlock()
-	if wake {
-		go a.watchCast(session)
-	}
 }
 
 // currentCast returns the session that is still this process's active cast.
@@ -305,7 +250,6 @@ func (a *App) castSnapshot() CastSessionView {
 		Duration:    session.Duration,
 		State:       state,
 		Converted:   session.Converted,
-		PlayMode:    session.PlayMode,
 		Reported:    reported,
 	}
 	if course := a.Store.Get(); course != nil && course.Path == session.CoursePath {
@@ -328,8 +272,6 @@ func (a *App) watchCast(session *CastSession) {
 	defer ticker.Stop()
 	for range ticker.C {
 		if !a.castTick(session) {
-			// Free the slot so a later play-mode change can wake this cast up
-			// again (setPlayMode starts a new watchdog).
 			a.cast.mutex.Lock()
 			session.watching = false
 			a.cast.mutex.Unlock()
@@ -413,30 +355,14 @@ func (a *App) castTick(session *CastSession) bool {
 		a.cast.mutex.Unlock()
 		return true
 	}
-	// The lesson finished: what happens next depends on the play mode. Talking
-	// to the renderer over HTTP is done without holding the lock.
-	mode := normalizePlayMode(session.PlayMode)
-	if mode == PlayModeLoop {
-		a.cast.mutex.Unlock()
-		if err := a.castRestart(session); err != nil {
-			logf("dlna: the cast stops here: %v", err)
-			a.cast.mutex.Lock()
-			session.State = CastStateEnded
-			session.watching = false
-			a.cast.mutex.Unlock()
-			a.stopCastDevice(session)
-			return false
-		}
-		logf("dlna: %s repeats %q", session.Device, session.LessonTitle)
-		return true
-	}
-	if mode != PlayModeNext || lesson == nil {
+	// The lesson finished: the cast carries on with the next one. Talking to
+	// the renderer over HTTP is done without holding the lock.
+	if lesson == nil {
 		session.State = CastStateEnded
 		session.watching = false
 		a.cast.mutex.Unlock()
-		// 单播不循环 really means the cast is over when the lesson is: stop the
-		// device as well, instead of only stopping to look after it (a renderer
-		// left alone may sit at the end of the file or carry on by itself).
+		// The lesson is gone from the course (or the course was re-scanned):
+		// stop the device as well, instead of only stopping to look after it.
 		a.stopCastDevice(session)
 		return false
 	}
@@ -578,54 +504,9 @@ func (a *App) castNext(session *CastSession) error {
 	return nil
 }
 
-// castRestart hands the very same lesson to the device again from the start -
-// that is what "loop this lesson" does when the lesson ends. The progress of
-// the finished run was already written by the watchdog, and seconds never move
-// backwards, so looping cannot erase it.
-func (a *App) castRestart(session *CastSession) error {
-	if session == nil {
-		return errors.New("no cast is running")
-	}
-	course := a.Store.Get()
-	if course == nil {
-		return errors.New("no course loaded")
-	}
-	lesson := FindLessonInTree(course.Root, session.LessonPath)
-	if lesson == nil {
-		return errors.New("lesson not found")
-	}
-	renderer, ok := a.DLNA.Lookup(session.UDN)
-	if !ok {
-		return errors.New("the cast device was not found on the network")
-	}
-	// The same file, so the decision the cast made before still holds: an
-	// "on" stream is restarted as a stream, everything else is re-evaluated.
-	mode := "auto"
-	if session.Converted {
-		mode = "on"
-	}
-	target, hasMedia, err := a.castTarget(session.BaseURL, course, lesson, mode, 0)
-	if err != nil {
-		return err
-	}
-	if !hasMedia {
-		return errors.New("this lesson has no media to cast")
-	}
-	duration := session.Duration
-	if err := a.DLNA.Cast(renderer, target.Item, 0); err != nil {
-		return err
-	}
-	a.cast.mutex.Lock()
-	if a.cast.session == session && !session.stopped {
-		session.reset(lesson, session.MediaFile, duration, target.Converted, time.Now())
-	}
-	a.cast.mutex.Unlock()
-	return nil
-}
-
 // stopCastDevice tells the device to stop playing. It is best effort: a TV that
 // was switched off cannot be reached, and the cast is over either way - this
-// only makes the end visible on the device too (单播不循环).
+// only makes the end visible on the device too (the course has run out).
 func (a *App) stopCastDevice(session *CastSession) {
 	if session == nil {
 		return
@@ -638,7 +519,7 @@ func (a *App) stopCastDevice(session *CastSession) {
 		logf("dlna: the device could not be stopped after %q: %v", session.LessonTitle, err)
 		return
 	}
-	logf("dlna: %s stopped after %q (play mode once)", session.Device, session.LessonTitle)
+	logf("dlna: %s stopped after %q (no lesson follows)", session.Device, session.LessonTitle)
 }
 
 // probeContext is the deadline for an ffprobe call that is not tied to a

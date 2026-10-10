@@ -208,11 +208,10 @@ stays scriptable:
 | POST   | `/api/forget_course`                    | `{"path": "..."}` — drop the course from the recent list and delete its stored progress       |
 | GET    | `/reset_course`, `/forget_course`       | Legacy redirect variants of the two endpoints above             |
 | GET    | `/api/dlna/devices`                     | Renderers found on the LAN (`?refresh=1` repeats the SSDP search) |
-| POST   | `/api/dlna/cast`                        | `{"device": "<udn>", "lesson_path": "...", "start_seconds": 30, "transcode": "auto"\|"on"\|"off", "play_mode": "once"\|"loop"\|"next"}` — push a lesson to a renderer; `play_mode` decides what happens when it ends (default `once`); `converted` in the answer says whether a stream was used |
+| POST   | `/api/dlna/cast`                        | `{"device": "<udn>", "lesson_path": "...", "start_seconds": 30, "transcode": "auto"\|"on"\|"off"}` — push a lesson to a renderer; when it ends the next one follows by itself; `converted` in the answer says whether a stream was used |
 | GET    | `/api/dlna/stream?lesson=<path>&start=30` | The converted stream (MPEG-TS / AAC) a renderer pulls while playing |
 | GET    | `/api/dlna/session`                     | The running cast: device, lesson, position/duration, state, next lesson |
 | POST   | `/api/dlna/control`                     | `{"device": "<udn>", "action": "play"\|"pause"\|"stop"\|"next"\|"seek", "position": 90}` |
-| POST   | `/api/settings`                         | `{"play_mode": "once"\|"loop"\|"next", "device": "<udn>"?}` — the global play-mode setting: stored on the server (so it survives a new browser / cleared cache / restart), applied to a cast that is already running (and wakes one up that stopped in `once`) |
 
 `/api/state` and `/api/lesson` carry `dlna_enabled`, so the UI hides the cast button when
 `OFFLINEU_DLNA=off`. `OFFLINEU_DLNA=off` makes the three DLNA endpoints answer `403`.
@@ -405,24 +404,13 @@ plays next), while the buttons pause, skip and stop the device from the browser.
   device (`Seek` with `REL_TIME`); a converted stream has no timeline to jump in, so ffmpeg is
   restarted at that position (`-ss`) and the device gets the new URL. Jumping past the end stops a
   second before it, so the lesson can still finish and continue.
-* When the lesson ends, what happens follows the **play mode** chosen in the player toolbar (the
-  same choice applies to browser playback and to casts): *Once* (default) stops, *Loop* starts the
-  same lesson again, and *Next* **pushes the next playable lesson to the same device** by itself
-  (documents are skipped) while the browser follows to the new lesson. The loop/next behaviour is
-  driven by a watchdog in the server, not by the page, so it also works with the browser closed.
-  Pick the mode with `"play_mode"` on `/api/dlna/cast` (`"once" | "loop" | "next"`; the legacy
-  `autoplay` boolean still maps onto it: `true` = `next`, `false` = `once`).
-* The mode is **not frozen when the cast starts**: the segmented control of the player toolbar and
-  the one on the cast bar send `POST /api/settings`, so switching 单播循环 / 单播不循环 / 连播 takes
-  effect while the TV is playing. A cast that already stopped because it was on *Once* is woken up
-  again by switching to *Loop* or *Next* (the watchdog then hands the device the repeat or the next
-  lesson), so a mode change never needs the cast to be restarted.
-* The choice is **stored on the server** (in the bookkeeping file next to the progress data) and
-  handed to every client through `/api/state` → `play_mode`, so it is a global setting: a new
-  browser, another machine or a cleared cache shows the mode that was picked last. localStorage is
-  only the first-paint cache. The cast itself lives in the server too, so closing the browser (or
-  using a different one) does not interrupt playback - the new window simply picks the running cast
-  up from `GET /api/dlna/session` and shows the bar with the same mode.
+* **Playback always continues**: when a lesson ends, the next playable lesson starts by itself -
+  in the browser and on a cast alike (documents are skipped), and the browser follows to the new
+  lesson. There is no mode to pick anywhere. On a cast the next lesson is **pushed to the same
+  device** by a watchdog in the server, not by the page, so it also works with the browser closed.
+* The cast itself lives in the server, so closing the browser (or using a different one) does not
+  interrupt playback - the new window simply picks the running cast up from
+  `GET /api/dlna/session` and shows the bar.
 * The cast bar is not tied to the lesson page: the **dashboard shows it too** (with a link to the
   lesson that is playing), so you can watch the progress, pause or skip while browsing the course
   tree. The lesson page follows the device as soon as it moves on - the comparison is made against
@@ -528,9 +516,9 @@ go run . --check-web # is the frontend bundle embedded?
 
 | File | What it covers |
 | --- | --- |
-| `e2e/api.mjs` | the JSON API: course loading, progress, the three play modes, `/health`, the DLNA endpoints |
-| `e2e/browser.mjs` | a real Edge: the player toolbar, the segmented control, mode persistence across a deep link and a reload, 连播 advancing, 循环 replaying |
-| `e2e/cast.mjs` | casting: SSDP discovery, the SOAP requests, the cast bar, switching the mode mid-cast, the watchdog |
+| `e2e/api.mjs` | the JSON API: course loading, progress, the autoplay target of a lesson, `/health`, the DLNA endpoints |
+| `e2e/browser.mjs` | a real Edge: the player toolbar, the speed preference, 连播 advancing to the next lesson, `?autoplay=1` |
+| `e2e/cast.mjs` | casting: SSDP discovery, the SOAP requests, the cast bar, the watchdog walking the course |
 
 ```bash
 cd e2e
