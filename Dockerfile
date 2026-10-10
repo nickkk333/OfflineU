@@ -24,8 +24,8 @@ FROM golang:1.24-alpine AS build
 WORKDIR /src
 
 # Version is injected at build time: a git tag becomes X.Y.Z, every other build
-# (CI branch/PR run, fnos/build.ps1, build-windows.ps1, docker/run.ps1) uses
-# latest - the same rule everywhere, so the version is never typed by hand.
+# (CI branch/PR run, docker/run.ps1) uses latest - the same rule everywhere, so
+# the version is never typed by hand.
 ARG VERSION=latest
 
 COPY go.mod ./
@@ -43,7 +43,7 @@ RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -X github.com/nickkk333/off
 # ---------------------------------------------------------------------------
 # The base image is multi-arch, so the image below is whatever `--platform`
 # asked for: the Makefile / CI always pass linux/amd64 (64-bit Intel/AMD) for
-# the published tar and the fnOS package; add linux/arm64 for ARM NAS boxes.
+# the published image file; add linux/arm64 for ARM NAS boxes.
 FROM alpine:3.21
 
 # libcap provides setcap/getcap: setcap applies the read capability below at build

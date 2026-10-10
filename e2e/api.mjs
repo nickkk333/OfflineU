@@ -2,7 +2,7 @@
 //
 //   node api.mjs <base-url> [course-path]
 //   node api.mjs http://127.0.0.1:5100 "D:\Documents\OfflineU\courses\E2E Course"
-//   node api.mjs http://127.0.0.1:5200 "/courses/E2E Course"        (docker/fpk)
+//   node api.mjs http://127.0.0.1:5200 "/courses/E2E Course"        (docker)
 import { check, collectLessons, note, request, summary } from './lib.mjs'
 
 const base = process.argv[2] || 'http://127.0.0.1:5100'
@@ -20,7 +20,7 @@ async function main() {
   const health = await request(base, '/health')
   check('A1 /health responds 200', health.status === 200, `status=${health.status}`)
 
-  // Make sure the E2E course is loaded (the exe gets it on the command line).
+  // Make sure the E2E course is loaded (a local binary gets it on the command line).
   let payload = await state()
   if (!payload || !payload.course) {
     note(`no active course - loading ${coursePath}`)

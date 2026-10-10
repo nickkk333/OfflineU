@@ -1,4 +1,0 @@
-#!/bin/bash
-# fnOS install hook (very first step). Native app: nothing to do here - the
-# container is created later by cmd/main start, which loads the bundled image.
-exit 0

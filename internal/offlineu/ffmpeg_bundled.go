@@ -1,15 +1,15 @@
 //go:build bundleffmpeg
 
-// Build tag bundleffmpeg: build-windows.ps1 drops a static Windows ffmpeg into
-// internal/offlineu/ffmpegwin and compiles with -tags bundleffmpeg, so the
-// resulting exe carries the binaries inside itself and never reaches out to the
+// Build tag bundleffmpeg: a static ffmpeg is dropped into
+// internal/offlineu/ffmpegwin and compiled with -tags bundleffmpeg, so the
+// resulting binary carries it inside itself and never reaches out to the
 // network to remux an .mkv. Every other build (go build, go test, the Docker
 // image) is compiled without the tag and therefore stays free of the ~160 MB.
 package offlineu
 
 import "embed"
 
-// ffmpegBundle holds the static binaries build-windows.ps1 placed in
+// ffmpegBundle holds the static binaries placed in
 // internal/offlineu/ffmpegwin before running the tagged build.
 //
 //go:embed ffmpegwin

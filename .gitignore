@@ -16,7 +16,7 @@ web/dist/*
 courses/
 data/
 
-# ---- Windows exe produced by build-windows.ps1 ----
+# ---- Local build outputs (go build, bundled-ffmpeg assets) ----
 /dist/
 /offlineu-*.exe
 # static ffmpeg downloaded for the bundled build (build tag bundleffmpeg)
@@ -25,13 +25,6 @@ data/
 # ---- Exported docker images (docker save) ----
 /image-dist/
 *.tar
-
-# ---- fnOS package artifacts & local build tool (rebuilt via fnos/build.ps1) ----
-*.fpk
-/fnos/fnpack.exe
-/fnos/fnpack
-# bundled offline image tar (built + saved by fnos/build.ps1; *.tar above covers it)
-/fnos/offlineu/app/images/
 
 # ---- Media files dropped in the repo root for manual testing ----
 # Handy to have a sample lesson around, far too big to end up in git: the test

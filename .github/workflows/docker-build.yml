@@ -15,8 +15,8 @@ jobs:
   # ---- One single place that decides the version of everything below.
   #   * push to main/master (or a PR) -> "latest"
   #   * push of a v* tag              -> the tag without the leading "v"
-  # The number is then baked into the binary, the image tag, the fpk name and
-  # every artifact/asset file name, so nothing is ever typed by hand.
+  # The number is baked into the image tag, the image file name and every
+  # release asset, so nothing is ever typed by hand.
   version:
     runs-on: ubuntu-latest
     outputs:
@@ -122,80 +122,15 @@ jobs:
         cache-from: type=gha
         cache-to: type=gha,mode=max
 
-  # ---- Native binaries: Linux (amd64/arm64) + Windows x64 ----
-  # File and artifact names carry the version: a branch push produces
-  #   offlineu-latest-windows-x64.exe / offlineu-latest-linux-amd64 / ...
-  # and a v2.1.6 tag produces
-  #   offlineu-2.1.6-windows-x64.exe / offlineu-2.1.6-linux-amd64 / ...
-  # The version baked into the binary follows the same rule.
-  binaries:
+  # ---- 64-bit (linux/amd64) image file for an offline `docker load` ----
+  # Same image the multi-arch push above ships, exported as a plain tar:
+  #   main push -> offlineu-amd64-latest.tar     (artifact only)
+  #   v2.1.6    -> offlineu-amd64-2.1.6.tar      (artifact + GitHub release asset)
+  image-tar:
     needs: [test, version]
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          # tag is the user-facing arch suffix; goarch is what Go expects.
-          # amd64 == x64 (the same 64-bit x86 architecture) - Windows artifacts
-          # are called x64, Linux keeps the usual amd64 / arm64 names.
-          - { goos: linux,   goarch: amd64, tag: amd64, ext: '' }
-          - { goos: linux,   goarch: arm64, tag: arm64, ext: '' }
-          - { goos: windows, goarch: amd64, tag: x64,   ext: '.exe' }
-    steps:
-    - name: Checkout repository
-      uses: actions/checkout@v4
-
-    - name: Set up Go
-      uses: actions/setup-go@v5
-      with:
-        go-version-file: go.mod
-        cache: true
-
-    - name: Set up Node
-      uses: actions/setup-node@v4
-      with:
-        node-version: '22'
-        cache: npm
-        cache-dependency-path: web/package-lock.json
-
-    - name: Build frontend
-      working-directory: web
-      run: npm ci && npm run build
-
-    - name: Build binary (${{ matrix.goos }}/${{ matrix.tag }})
-      env:
-        GOOS: ${{ matrix.goos }}
-        GOARCH: ${{ matrix.goarch }}
-        ATAG: ${{ matrix.tag }}
-        EXT: ${{ matrix.ext }}
-        CGO_ENABLED: "0"
-        VERSION: ${{ needs.version.outputs.version }}
-      run: |
-        set -e
-        OUT="offlineu-${VERSION}-${GOOS}-${ATAG}${EXT}"
-        go build -trimpath -ldflags="-s -w -X github.com/nickkk333/offlineu/internal/offlineu.Version=$VERSION" -o "$OUT" .
-        ls -l "$OUT"
-
-    - name: Upload binary artifact
-      uses: actions/upload-artifact@v4
-      with:
-        name: offlineu-${{ needs.version.outputs.version }}-${{ matrix.goos }}-${{ matrix.tag }}
-        path: offlineu-${{ needs.version.outputs.version }}-${{ matrix.goos }}-${{ matrix.tag }}${{ matrix.ext }}
-        retention-days: 30
-
-  # ---- fnOS package (.fpk) + the 64-bit (amd64) image tar, fully offline ----
-  # The image is built here (linux/amd64, 64-bit) and exported twice:
-  #   * into the package (cmd/main docker-loads it on start, so the NAS never
-  #     reaches out to any registry), and
-  #   * as a standalone release artifact `offlineu-amd64-<version>.tar` that
-  #     anyone can `docker load -i` without a registry.
-  # fnOS's manifest only knows platform = x86 / arm / all, and x86 means the
-  # 64-bit Intel/AMD (amd64 = x64) architecture - so the file keeps the
-  # `_x86.fpk` suffix fnOS expects: offlineu_2.0.0_x86.fpk (tag) or
-  # offlineu_latest_x86.fpk (branch push).
-  fpk:
-    needs: [test, version]
-    runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
     - name: Checkout repository
       uses: actions/checkout@v4
@@ -203,77 +138,32 @@ jobs:
     - name: Set up Docker Buildx
       uses: docker/setup-buildx-action@v3
 
-    - name: Build and export the image into the package
+    - name: Build linux/amd64 and export the image file
       env:
         V: ${{ needs.version.outputs.version }}
       run: |
         set -e
         docker buildx build --platform linux/amd64 --load \
           --build-arg VERSION="$V" \
-          -t offlineu:local -f Dockerfile .
-        # Same two tags fnos/build.ps1 exports: offlineu:local is what cmd/main
-        # loads, offlineu:<version> matches the tag docker/run.ps1 produces.
-        docker tag offlineu:local "offlineu:$V"
-        mkdir -p fnos/offlineu/app/images
-        docker save offlineu:local "offlineu:$V" -o fnos/offlineu/app/images/offlineu-amd64.tar
-        # Standalone 64-bit image file for the release / artifacts.
-        cp fnos/offlineu/app/images/offlineu-amd64.tar "$GITHUB_WORKSPACE/offlineu-amd64-$V.tar"
-        ls -lh "$GITHUB_WORKSPACE/offlineu-amd64-$V.tar"
+          -t offlineu:local -t "offlineu:$V" \
+          --cache-from type=gha --cache-to type=gha,mode=max \
+          -f Dockerfile .
+        docker save offlineu:local "offlineu:$V" -o "offlineu-amd64-$V.tar"
+        ls -lh "offlineu-amd64-$V.tar"
         docker image inspect "offlineu:$V" --format '{{.Os}}/{{.Architecture}} {{.Size}}'
 
-    - name: Install fnpack
-      run: |
-        set -e
-        for V in 1.2.3 1.2.1 1.2.0; do
-          if curl -fsSL "https://static2.fnnas.com/fnpack/fnpack-${V}-linux-amd64" -o fnpack; then
-            echo "using fnpack ${V}"; break
-          fi
-        done
-        chmod +x fnpack
-        sudo mv fnpack /usr/local/bin/fnpack
-        fnpack --help >/dev/null 2>&1 || true
-
-    - name: Pin manifest to x86 (fnOS's name for amd64/x64) and set version
-      working-directory: fnos/offlineu
-      env:
-        V: ${{ needs.version.outputs.version }}
-      run: |
-        sed -i 's/^platform[[:space:]]*=.*/platform = x86/' manifest
-        sed -i "s/^version[[:space:]]*=.*/version = $V/" manifest
-        grep -E '^(appname|version|platform) ' manifest
-
-    - name: Build fpk
-      working-directory: fnos/offlineu
-      env:
-        V: ${{ needs.version.outputs.version }}
-      run: |
-        set -e
-        fnpack build
-        fpk=$(ls ./*.fpk | head -n1)
-        mv "$fpk" "$GITHUB_WORKSPACE/offlineu_${V}_x86.fpk"
-        ls -l "$GITHUB_WORKSPACE"/*.fpk
-
-    - name: Upload fpk artifact
-      uses: actions/upload-artifact@v4
-      with:
-        name: offlineu-${{ needs.version.outputs.version }}-fpk-x86
-        path: "offlineu_${{ needs.version.outputs.version }}_x86.fpk"
-        retention-days: 30
-
-    - name: Upload 64-bit (amd64) image tar artifact
+    - name: Upload image tar artifact
       uses: actions/upload-artifact@v4
       with:
         name: offlineu-${{ needs.version.outputs.version }}-image-amd64
         path: offlineu-amd64-${{ needs.version.outputs.version }}.tar
-        # Shorter retention: every tagged release attaches the same tar as a
-        # release asset, and branch artifacts are rebuilt on the next push.
         retention-days: 14
 
-  # ---- Release: attach every asset when a v* tag is pushed ----
+  # ---- Release: attach the 64-bit image file when a v* tag is pushed ----
   release:
     name: Publish GitHub release
     if: startsWith(github.ref, 'refs/tags/')
-    needs: [docker, binaries, fpk]
+    needs: [docker, image-tar]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -301,7 +191,7 @@ jobs:
         body: |
           ## OfflineU ${{ github.ref_name }}
 
-          全部产物均为 **64 位**：Windows x64 exe、Linux amd64/arm64 二进制、linux/amd64 镜像 tar、fnOS amd64 应用包。
+          分发方式只有 **Docker**（64 位 `linux/amd64` 镜像文件 + 多架构镜像仓库）。
 
           ### Docker（多架构 amd64 / arm64）
           ```bash
@@ -311,31 +201,21 @@ jobs:
             -v offlineu-data:/app/data \
             ghcr.io/${{ github.repository }}:${{ steps.ver.outputs.version }}
           ```
-          > 想一直跟最新版用 `ghcr.io/${{ github.repository }}:latest` —— 每次推送 main/master 都会自动重建并更新该 tag；本 Release 的镜像固定为 `:${{ steps.ver.outputs.version }}`。
+          > 想一直跟最新版用 `ghcr.io/${{ github.repository }}:latest` —— 每次推送 main/master 都会自动重建并更新该 tag；本 Release 对应的镜像固定为 `:${{ steps.ver.outputs.version }}`。
 
           ### 64 位镜像文件（离线 `docker load`，无需镜像仓库）
-          `offlineu-amd64-${{ steps.ver.outputs.version }}.tar`（linux/amd64）→
-          `docker load -i offlineu-amd64-${{ steps.ver.outputs.version }}.tar`
-
-          ### 飞牛OS / fnOS（amd64 = x64，manifest `platform=x86`）
-          应用中心 → 手动安装 → 上传 `offlineu_${{ steps.ver.outputs.version }}_x86.fpk`（内置 amd64 镜像，离线安装，无需镜像仓库）。
-
-          ### Linux / Windows 原生二进制
-          直接运行对应可执行文件（前端已内嵌），例如：
+          `offlineu-amd64-${{ steps.ver.outputs.version }}.tar`（linux/amd64）：
           ```bash
-          ./offlineu-${{ steps.ver.outputs.version }}-linux-amd64 --host 0.0.0.0 --port 5000
-          ./offlineu-${{ steps.ver.outputs.version }}-linux-arm64 --host 0.0.0.0 --port 5000
-          .\offlineu-${{ steps.ver.outputs.version }}-windows-x64.exe --port 5000
+          docker load -i offlineu-amd64-${{ steps.ver.outputs.version }}.tar
+          docker run -d --name offlineu -p 5000:5000 \
+            -v "/path/to/your/courses:/courses:ro" \
+            -v offlineu-data:/app/data \
+            offlineu:${{ steps.ver.outputs.version }}
           ```
-          > 实时转封装（MKV / MPEG-TS → 浏览器原生 MP4）依赖 `ffmpeg`：原生二进制首次播放会自动下载静态 ffmpeg，或自行安装并放入 PATH / 设置 `OFFLINEU_FFMPEG`。
 
           | 文件 | 说明 |
           | --- | --- |
-          | `offlineu-${{ steps.ver.outputs.version }}-linux-amd64` | Linux x86_64（amd64）二进制 |
-          | `offlineu-${{ steps.ver.outputs.version }}-linux-arm64` | Linux ARM64 二进制 |
-          | `offlineu-${{ steps.ver.outputs.version }}-windows-x64.exe` | Windows x64（amd64）二进制 |
           | `offlineu-amd64-${{ steps.ver.outputs.version }}.tar` | Docker 镜像文件（linux/amd64，`docker load -i` 用） |
-          | `offlineu_${{ steps.ver.outputs.version }}_x86.fpk` | 飞牛OS 应用包（amd64 / x64，内置镜像） |
           | `checksums.txt` | SHA-256 校验和 |
 
-          版本号跟随 git tag（`${{ github.ref_name }}` → `${{ steps.ver.outputs.version }}`），二进制内 `Version`、镜像 tag、manifest 版本与所有文件名同步。
+          版本号跟随 git tag（`${{ github.ref_name }}` → `${{ steps.ver.outputs.version }}`），镜像 tag、`--build-arg VERSION` 与文件名同步。

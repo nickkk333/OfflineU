@@ -1,4 +1,0 @@
-#!/bin/bash
-# fnOS uninstall hook: remove the app-owned container (native app, so fnOS won't).
-docker rm -f offlineu >/dev/null 2>&1 || true
-exit 0

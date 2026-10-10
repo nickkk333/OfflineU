@@ -44,8 +44,8 @@ param(
     [switch]$Logs
 )
 
-# docker 把进度输出到 stderr；走 cmd /c 中转，避免 PowerShell 把它当成终止性错误
-# （fnos/build.ps1 里是同样的处理），退出码统一看 $LASTEXITCODE。
+# docker 把进度输出到 stderr；走 cmd /c 中转，避免 PowerShell 把它当成终止性错误，
+# 退出码统一看 $LASTEXITCODE。
 $ErrorActionPreference = "Continue"
 
 $root       = Split-Path -Parent $PSScriptRoot        # 仓库根目录（Dockerfile 在这里）

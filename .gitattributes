@@ -13,8 +13,8 @@
 #       rules below only make that guarantee unambiguous.
 #   * cmd.exe batch scripts are the one exception that still needs CRLF.
 #
-# fnOS package scripts (fnos/offlineu/cmd/*, wizard/*, config/*, manifest, ...)
-# are covered by the global rule - they run under fnOS's Linux shell.
+# fnOS-specific rules are gone (the fpk packaging was removed); the global rule
+# above already covers every script that runs on a Linux host.
 # ---------------------------------------------------------------------------
 * text=auto eol=lf
 
@@ -38,7 +38,6 @@
 *.zip               binary
 *.gz                binary
 *.tar               binary
-*.fpk               binary
 *.exe               binary
 *.dll               binary
 *.so                binary
