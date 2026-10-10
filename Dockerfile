@@ -41,6 +41,9 @@ RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -X github.com/nickkk333/off
 # ---------------------------------------------------------------------------
 # Stage 3 - minimal runtime image
 # ---------------------------------------------------------------------------
+# The base image is multi-arch, so the image below is whatever `--platform`
+# asked for: the Makefile / CI always pass linux/amd64 (64-bit Intel/AMD) for
+# the published tar and the fnOS package; add linux/arm64 for ARM NAS boxes.
 FROM alpine:3.21
 
 # libcap provides setcap/getcap: setcap applies the read capability below at build

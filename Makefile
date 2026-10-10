@@ -20,6 +20,16 @@ PLATFORM ?= linux/amd64
 EXE_ARCH ?= amd64
 NPM      := npm --prefix web
 
+# 产物名里的架构后缀：amd64 就是 x64（同一个 64 位 x86 架构），面向用户的
+# Windows 产物统一叫 x64，Linux 保留 Go 的 amd64 / arm64 叫法。
+ifeq ($(EXE_ARCH),amd64)
+EXE_TAG := x64
+else ifeq ($(EXE_ARCH),386)
+EXE_TAG := x86
+else
+EXE_TAG := $(EXE_ARCH)
+endif
+
 # 版本号。用 2>&1 而不是 2>/dev/null，因为 cmd 和 sh 都认这个写法；
 # 没有 tag 时 git 会打印一行 fatal:...，下面的判断会把它识别为 latest。
 GIT_TAG := $(shell git describe --tags --exact-match HEAD 2>&1)
@@ -47,12 +57,12 @@ endif
 help: ## 显示所有目标
 	@echo $(Q)OfflineU $(VERSION)$(Q)
 	@$(BLANK)
-	@echo $(Q)  make all          exe + 镜像 + fpk（一键出全部分发物）$(Q)
-	@echo $(Q)  make exe          Windows exe → dist/offlineu-$(VERSION).exe$(Q)
+	@echo $(Q)  make all          exe + 64 位镜像 tar + fpk（一键出全部 64 位分发物）$(Q)
+	@echo $(Q)  make exe          Windows x64 exe → dist/offlineu-$(VERSION)-x64.exe$(Q)
 	@echo $(Q)  make exe-portable 便携版 exe（内嵌 ffmpeg，走 build-windows.ps1）$(Q)
 	@echo $(Q)  make image        Docker 镜像 offlineu:local + offlineu:$(VERSION)$(Q)
-	@echo $(Q)  make image-save   镜像导出为 image-dist/offlineu-amd64-$(VERSION).tar$(Q)
-	@echo $(Q)  make fpk          飞牛OS 包 fnos/offlineu_$(VERSION)_x86.fpk$(Q)
+	@echo $(Q)  make image-save   64 位镜像导出 image-dist/offlineu-amd64-$(VERSION).tar$(Q)
+	@echo $(Q)  make fpk          飞牛OS 包 fnos/offlineu_$(VERSION)_x86.fpk（amd64 / x64，内置镜像）$(Q)
 	@$(BLANK)
 	@echo $(Q)  make web          只构建前端 web/dist$(Q)
 	@echo $(Q)  make check        go vet + go test$(Q)
@@ -61,7 +71,7 @@ help: ## 显示所有目标
 	@$(BLANK)
 	@echo $(Q)版本来自 git tag：$(GIT_TAG) → $(VERSION)$(Q)
 
-all: exe image fpk ## 一键：exe + 镜像 + fpk
+all: exe image-save fpk ## 一键：exe（x64） + 64 位镜像 tar + fpk
 
 # ---------------------------------------------------------------------------
 # 前端。Go 用 //go:embed all:web/dist 把它编进二进制，所以 exe 之前必须先构建。
@@ -72,7 +82,9 @@ web:
 
 # ---------------------------------------------------------------------------
 # Windows exe。交叉编译，任何平台都能产出 Windows 版本；产物是静态单文件，
-# 不依赖任何运行时。SKIP_WEB=1 可跳过前端（web/dist 已是最新的时）。
+# 不依赖任何运行时。默认 GOARCH=amd64（= x64，64 位），产物名带 -x64 后缀；
+# 想出别的架构：make exe EXE_ARCH=arm64 → dist/offlineu-<版本>-arm64.exe。
+# SKIP_WEB=1 可跳过前端（web/dist 已是最新的时）。
 # ---------------------------------------------------------------------------
 ifeq ($(SKIP_WEB),1)
 exe:
@@ -88,8 +100,8 @@ ifeq ($(OS),Windows_NT)
 else
 	@mkdir -p dist
 endif
-	go build -trimpath -ldflags="-s -w -X $(PKG)/internal/offlineu.Version=$(VERSION)" -o dist/offlineu-$(VERSION).exe .
-	@echo $(Q)Done: dist/offlineu-$(VERSION).exe$(Q)
+	go build -trimpath -ldflags="-s -w -X $(PKG)/internal/offlineu.Version=$(VERSION)" -o dist/offlineu-$(VERSION)-$(EXE_TAG).exe .
+	@echo $(Q)Done: dist/offlineu-$(VERSION)-$(EXE_TAG).exe（$(EXE_ARCH) / 64 位）$(Q)
 
 # 便携版：内嵌静态 ffmpeg（约 166 MB），首次播放 MKV / MPEG-TS 不用联网下载。
 # 由 PowerShell 脚本完成，需要 Windows 宿主。

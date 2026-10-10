@@ -1,11 +1,47 @@
-# Keep fnOS shell/scripts with LF endings so they run under fnOS (Linux).
-# Without this, git's autocrlf on Windows would store/checkout CRLF and break
-# the `#!/bin/bash` shebang once the package is installed on the NAS.
-fnos/offlineu/cmd/*         text eol=lf
-fnos/offlineu/wizard/*      text eol=lf
-fnos/offlineu/config/*      text eol=lf
-fnos/offlineu/manifest      text eol=lf
-fnos/offlineu/app/docker/docker-compose.yaml  text eol=lf
-fnos/offlineu/app/ui/config text eol=lf
-fnos/offlineu/app/ui/images/*.png binary
-fnos/build.ps1              text eol=lf
+# ---------------------------------------------------------------------------
+# Line endings: one rule for the whole repository.
+#
+#   * text=auto eol=lf
+#     - text files are stored with LF in the repository AND checked out with LF
+#       on every OS. Before this, core.autocrlf=true on Windows turned the whole
+#       working tree into CRLF while the index stayed LF: `git status` was noisy
+#       ("LF will be replaced by CRLF"), diffs depended on who edited the file,
+#       and shell scripts shipped to fnOS (Linux) could break on their shebang.
+#     - attributes always win over core.autocrlf, so the local config no longer
+#       matters. Renormalize after changing this file:  git add --renormalize .
+#     - files git detects as binary are left untouched; the explicit binary
+#       rules below only make that guarantee unambiguous.
+#   * cmd.exe batch scripts are the one exception that still needs CRLF.
+#
+# fnOS package scripts (fnos/offlineu/cmd/*, wizard/*, config/*, manifest, ...)
+# are covered by the global rule - they run under fnOS's Linux shell.
+# ---------------------------------------------------------------------------
+* text=auto eol=lf
+
+# Windows command scripts must stay CRLF for cmd.exe.
+*.bat               text eol=crlf
+*.cmd               text eol=crlf
+
+# Never touch line endings of binaries / archives.
+*.png               binary
+*.jpg               binary
+*.jpeg              binary
+*.gif               binary
+*.ico               binary
+*.webp              binary
+*.svg               text
+*.woff              binary
+*.woff2             binary
+*.ttf               binary
+*.eot               binary
+*.pdf               binary
+*.zip               binary
+*.gz                binary
+*.tar               binary
+*.fpk               binary
+*.exe               binary
+*.dll               binary
+*.so                binary
+*.wasm              binary
+*.mp4               binary
+*.mkv               binary

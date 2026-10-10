@@ -14,14 +14,16 @@ Python 或任何运行时依赖。
     （或设 AUTO_LOAD_COURSE 环境变量），那时就以该路径为准。
 
 版本和 docker/run.ps1 一样自动推导，不需要手动指定：
-  * HEAD 正好打着 tag（v1.2.3） -> offlineu-1.2.3.exe，二进制 Version=1.2.3
-  * 其它（日常开发）            -> offlineu-latest.exe，二进制 Version=latest
+  * HEAD 正好打着 tag（v1.2.3） -> offlineu-1.2.3-x64.exe，二进制 Version=1.2.3
+  * 其它（日常开发）            -> offlineu-latest-x64.exe，二进制 Version=latest
+
+产物固定是 64 位 Windows（GOARCH=amd64，即 x64），文件名带 -x64 后缀标明架构。
 
 注意：转封装（MKV / MPEG-TS -> 浏览器原生 MP4）依赖 ffmpeg。exe 首次播放会自动
 下载静态 ffmpeg，也可以自己装好放进 PATH 或设 OFFLINEU_FFMPEG。
 
 .EXAMPLE
-.\build-windows.ps1                 # 编译前端 + 生成 dist\offlineu-<version>.exe
+.\build-windows.ps1                 # 编译前端 + 生成 dist\offlineu-<version>-x64.exe
 .\build-windows.ps1 -SkipFrontend   # web\dist 已是最新时跳过前端编译
 .\build-windows.ps1 -Run            # 编译完立刻启动，验证一下
 #>
@@ -112,7 +114,7 @@ if (-not $OutDir) { $OutDir = Join-Path $root "dist" }
 if (-not (Test-Path -LiteralPath $OutDir)) {
     New-Item -ItemType Directory -Force -Path $OutDir | Out-Null
 }
-$out = Join-Path (Resolve-Path -LiteralPath $OutDir).ProviderPath "offlineu-$version.exe"
+$out = Join-Path (Resolve-Path -LiteralPath $OutDir).ProviderPath "offlineu-$version-x64.exe"
 
 $env:CGO_ENABLED = "0"
 $env:GOOS        = "windows"
@@ -129,7 +131,7 @@ Write-Host ""
 Write-Host "完成: $out"
 Write-Host "  用法：把这个 exe 拷进课程文件夹，双击即可（课程文件夹 = exe 所在目录，"
 Write-Host "        进度写在同级的 data\ 下）。浏览器打开 http://127.0.0.1:5000"
-Write-Host "  指定课程：.\offlineu-$version.exe `"D:\Courses\Python`""
+Write-Host "  指定课程：.\offlineu-$version-x64.exe `"D:\Courses\Python`""
 Write-Host "  局域网访问：加 --host 0.0.0.0（首次运行会弹防火墙提示，允许专用网络）"
 
 if ($Run) {

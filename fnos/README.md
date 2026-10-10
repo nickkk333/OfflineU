@@ -1,8 +1,10 @@
 # OfflineU 飞牛OS（fnOS）应用包
 
-本目录把 OfflineU 打包成飞牛OS 应用中心可直接安装的 `.fpk` 包（仅 **amd64 / x86**）。
-**完全离线**：Docker 镜像随包内置（`app/images/offlineu-amd64.tar`），启动时由
-`cmd/main` 执行 `docker load`，飞牛OS 全程不访问任何镜像仓库。
+本目录把 OfflineU 打包成飞牛OS 应用中心可直接安装的 `.fpk` 包（**仅 64 位 amd64 / x64**；
+fnOS 的 `manifest.platform` 只有 `x86` / `arm` / `all`，其中 `x86` 指的就是 64 位 Intel/AMD 机器，
+所以文件名后缀是 `_x86`）。
+**完全离线**：Docker 镜像随包内置（`app/images/offlineu-amd64.tar`，`--platform linux/amd64` 64 位），
+启动时由 `cmd/main` 执行 `docker load`，飞牛OS 全程不访问任何镜像仓库。
 
 ## 目录结构
 
@@ -71,9 +73,17 @@ cd fnos
 
 ### CI 打包（GitHub Actions）
 
-`.github/workflows/docker-build.yml` 的 `fpk` job 用 `docker buildx` 构建 amd64 镜像并
-`docker save` 到包内，再 `fnpack build`，产物上传为 Artifacts（`offlineu-fpk-x86`）；
-打 `v*` tag 时附到 Release。CI 的 compose 已写死 `offlineu:local` + `pull_policy: never`，
+`.github/workflows/docker-build.yml` 的 `fpk` job 用 `docker buildx` 构建 amd64（64 位）镜像并
+`docker save` 到包内，再 `fnpack build`，产物上传为 Artifacts；打 `v*` tag 时同时附到 Release。
+版本号与文件名跟随同一条规则（由统一的 `version` job 计算）：
+
+| 触发 | fpk Artifact / Release 文件名 | 镜像 tar Artifact |
+| --- | --- | --- |
+| 推送 main/master | `offlineu_latest_x86.fpk`（artifact `offlineu-latest-fpk-x86`） | `offlineu-amd64-latest.tar` |
+| 打 tag `v1.2.3` | `offlineu_1.2.3_x86.fpk`（artifact `offlineu-1.2.3-fpk-x86`） | `offlineu-amd64-1.2.3.tar` |
+
+镜像 tar 也是可独立分发的 64 位镜像文件：下载后 `docker load -i offlineu-amd64-<版本>.tar` 即可，
+同样不需要任何镜像仓库。CI 的 compose 已写死 `offlineu:local` + `pull_policy: never`，
 安装时不依赖 ghcr。
 
 ## 安装（离线，无镜像仓库）
@@ -113,4 +123,5 @@ fnOS 的桌面图标由 `manifest` 的桌面字段 + `app/ui/config` 共同决�
   `${TRIM_TEMP_LOGFILE:-${TRIM_PKGVAR}/offlineu-main.log}`；容器日志可用
   `docker logs offlineu` 查看。
 - **应用包不符合系统要求**：fpk 必须由官方 `fnpack` 生成，`manifest.platform` 须为
-  `x86`，且包内脚本为 LF（本仓库用 `.gitattributes` + 构建脚本强制 LF）。
+  `x86`（fnOS 对 64 位 amd64/x64 的叫法），且包内脚本为 LF
+  （本仓库用 `.gitattributes` 的 `* text=auto eol=lf` + 构建脚本强制 LF）。

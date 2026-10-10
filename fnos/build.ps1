@@ -1,6 +1,10 @@
 ﻿# Build the OfflineU fnOS package (.fpk) locally with the official fnpack tool.
 #
-# amd64 / x86 only. Do NOT hand-roll a tar.gz - fnOS rejects that structure with
+# amd64 / x64 only. fnOS's manifest calls the 64-bit Intel/AMD architecture
+# `platform = x86` (its only values are x86 / arm / all), so the file keeps the
+# `_x86.fpk` suffix fnOS expects - it IS the amd64/x64 build: the image inside
+# is built with `--platform linux/amd64` (64-bit) and no arm package is produced.
+# Do NOT hand-roll a tar.gz - fnOS rejects that structure with
 # "应用包不符合系统要求"; the package must be produced by fnpack.
 #
 # Fully OFFLINE install: this script also builds the Docker image locally, exports

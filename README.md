@@ -63,15 +63,19 @@ Linux):
 | Command | What it produces |
 | ------- | ---------------- |
 | `make` | lists every target |
-| `make all` | **exe + Docker image + fnOS package** — the whole release set |
-| `make exe` | `dist/offlineu-<version>.exe` (cross-compiled, works on any host) |
-| `make exe-portable` | portable exe with ffmpeg embedded (Windows host, via `build-windows.ps1`) |
-| `make image` | `offlineu:local` **and** `offlineu:<version>` |
+| `make all` | **exe (x64) + 64-bit image tar + fnOS package** — the whole release set |
+| `make exe` | `dist/offlineu-<version>-x64.exe` (Windows x64 = amd64, cross-compiled, works on any host) |
+| `make exe-portable` | portable x64 exe with ffmpeg embedded (Windows host, via `build-windows.ps1`) |
+| `make image` | `offlineu:local` **and** `offlineu:<version>` (linux/amd64, 64-bit) |
 | `make image-save` | `image-dist/offlineu-amd64-<version>.tar` for an offline `docker load` |
-| `make fpk` | `fnos/offlineu_<version>_x86.fpk` (builds the image first, then reuses it) |
+| `make fpk` | `fnos/offlineu_<version>_x86.fpk` — fnOS package for amd64/x64 (builds the image first, then reuses it) |
 | `make web` | only the frontend (`web/dist`) |
 | `make check` | `go vet` + `go test` |
 | `make clean` | removes `dist/`, `image-dist/` and the `.fpk` files |
+
+> Everything above is **64-bit only**: the exe is `GOARCH=amd64` (x64), the image and the tar are
+> `linux/amd64`, and the fpk bundles that same amd64 image (fnOS's `manifest.platform` calls this
+> architecture `x86` — its only values are `x86` / `arm` / `all`, and there is no 32-bit fnOS).
 
 The version always comes from the git tag, exactly like `build-windows.ps1`,
 `docker/run.ps1` and `fnos/build.ps1`: `HEAD` tagged `v2.1.2` → `2.1.2`, otherwise
@@ -156,7 +160,7 @@ CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -o offlineu.exe .
    > 版本号 `2.0.3` 换成你想要的。cmd 里写法是 `set CGO_ENABLED=0`，其余相同。
 
    或者直接用仓库里的脚本：它按上面的顺序做完（前端 → exe），版本号也自动跟随
-   git tag（没有 tag 就是 `latest`），产物在 `dist\offlineu-<version>.exe`：
+   git tag（没有 tag 就是 `latest`），产物在 `dist\offlineu-<version>-x64.exe`：
 
    ```powershell
    .\build-windows.ps1          # -SkipFrontend 跳过前端编译，-Run 编译完直接启动
@@ -189,7 +193,7 @@ CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -o offlineu.exe .
    即可运行，课程文件夹通过启动参数或界面里的选择器指向，无需一起复制：
 
    ```powershell
-   Compress-Archive -Path offlineu.exe -DestinationPath offlineu-windows-amd64.zip
+   Compress-Archive -Path offlineu.exe -DestinationPath offlineu-windows-x64.zip
    ```
 
    > 个别杀毒软件 / SmartScreen 可能对新编译的未知 exe 误报（无签名的 Go 单文件
@@ -555,6 +559,26 @@ For a production build, run `cd web && npm run build` and then `go build -o offl
 compiled bundle is embedded into the binary. `--web-dir web/dist` lets you serve the bundle
 from disk instead (handy when experimenting with `npm run build`).
 
+### Line endings (CRLF / LF)
+
+The repository is **LF-only**, enforced by `.gitattributes`:
+
+```gitattributes
+* text=auto eol=lf                 # stored as LF, checked out as LF on every OS
+*.bat / *.cmd                      # the only CRLF exception (cmd.exe needs it)
+*.png / *.tar / *.fpk / *.exe / …  # binary, never touched
+```
+
+Attributes beat `core.autocrlf`, so a Windows checkout no longer rewrites the working tree to
+CRLF (which used to leave 76 files permanently "modified" and could break the `#!/bin/bash`
+shebangs of the fnOS scripts that run on Linux). After changing `.gitattributes`, renormalize
+once:
+
+```bash
+git add --renormalize .
+git status        # should come back clean
+```
+
 ---
 
 ## 🧪 Tests
@@ -628,20 +652,24 @@ git tag v1.2.3
 git push origin v1.2.3
 ```
 
-> A push to `main`/`master **without** a tag only runs the test + build + image jobs (the
-> image is tagged `:main`); no GitHub Release is created and the binaries are short-lived
-> artifacts.
+> Pushing `main`/`master` **without** a tag still builds and publishes everything — it just uses the
+> version **`latest`** instead of a number: the image is pushed as `ghcr.io/<repo>:latest` (plus
+> `:main` / `:sha-…`), and the run's artifacts are named `offlineu-latest-*`
+> (`offlineu-latest-windows-x64.exe`, `offlineu-latest-linux-amd64`, `offlineu_latest_x86.fpk`,
+> `offlineu-amd64-latest.tar`). No GitHub Release is created; the artifacts live for 30 days (the
+> image tar for 14) and the next push replaces them.
 
 ### What the release contains
 
-每次推送一个 `v*` tag，Release 会自动附带以下资源：
+每次推送一个 `v*` tag，Release 会自动附带以下资源（全部 64 位）：
 
 | 资源 | 平台 / 架构 | 说明 |
 | ---- | ----------- | ---- |
-| `offlineu-linux-amd64` | Linux x86_64 | 原生二进制，前端已内嵌 |
-| `offlineu-linux-arm64` | Linux ARM64（树莓派 / ARM NAS） | 同上 |
-| `offlineu-windows-amd64.exe` | Windows x86_64 | 同上 |
-| `offlineu_<version>_x86.fpk` | 飞牛OS / fnOS（amd64） | 应用包，内置镜像，离线安装 |
+| `offlineu-<version>-linux-amd64` | Linux x86_64（amd64） | 原生二进制，前端已内嵌 |
+| `offlineu-<version>-linux-arm64` | Linux ARM64（树莓派 / ARM NAS） | 同上 |
+| `offlineu-<version>-windows-x64.exe` | Windows x64（amd64） | 同上 |
+| `offlineu-amd64-<version>.tar` | Docker 镜像 `linux/amd64` | 离线 `docker load -i`，无需镜像仓库 |
+| `offlineu_<version>_x86.fpk` | 飞牛OS / fnOS（amd64 = x64，manifest `platform=x86`） | 应用包，内置 amd64 镜像，离线安装 |
 | `checksums.txt` | — | SHA-256 校验和 |
 
 ### Version flow
@@ -650,11 +678,15 @@ The version is taken from the git tag (`v2.0.0` → `2.0.0`) and injected everyw
 time, so every artifact of a release shares the same number:
 
 * **Binary** — `go build -ldflags="-X .../internal/offlineu.Version=2.0.0"`; shown in `--help`
-  and the API (`/api/state` → `version`).
+  and the API (`/api/state` → `version`). The file name carries the number too:
+  `offlineu-2.0.0-windows-x64.exe`, `offlineu-2.0.0-linux-amd64`, …
 * **Docker image** — pushed to GitHub Container Registry as `ghcr.io/nickkk333/offlineu:2.0.0`,
-  plus the rolling tags `:2.0`, `:2` and `:main` (`:main` is only on branch builds).
+  plus the rolling tags `:2.0` and `:2`. The `:latest` tag is reserved for **branch pushes**
+  (push to `main` → `ghcr.io/<repo>:latest` rebuilds automatically).
+* **Docker image file** — `offlineu-amd64-2.0.0.tar`, the same image exported with
+  `docker save` for machines without a registry.
 * **fnOS package** — `offlineu_2.0.0_x86.fpk`; the `manifest` version is set to the same
-  number.
+  number (`x86` is fnOS's name for the amd64 / x64 architecture).
 * **`checksums.txt`** — SHA-256 of every attached asset, for verifying downloads.
 
 > Anything that is not a tagged commit (branch / PR / local build) uses **`latest`** everywhere
@@ -664,16 +696,18 @@ time, so every artifact of a release shares the same number:
 
 ### 飞牛OS / fnOS
 
-应用中心 → 手动安装 → 上传 `offlineu_<version>_x86.fpk`。镜像已打包进应用包，安装全程离线，无需镜像仓库。仅支持 amd64。
+应用中心 → 手动安装 → 上传 `offlineu_<version>_x86.fpk`。镜像已打包进应用包，安装全程离线，无需镜像仓库。
+仅支持 **64 位 amd64 / x64**（fnOS 的 `manifest.platform` 只有 `x86` / `arm` / `all` 三个取值，
+其中 `x86` 就是 64 位 Intel/AMD 机器；包内镜像为 `linux/amd64`）。
 
 ### 原生二进制（Linux / Windows）
 
 直接运行对应可执行文件（前端已编译进二进制，无需 Node）：
 
 ```bash
-./offlineu-linux-amd64 --host 0.0.0.0 --port 5000
-./offlineu-linux-arm64 --host 0.0.0.0 --port 5000
-.\offlineu-windows-amd64.exe --port 5000
+./offlineu-2.0.0-linux-amd64 --host 0.0.0.0 --port 5000
+./offlineu-2.0.0-linux-arm64 --host 0.0.0.0 --port 5000
+.\offlineu-2.0.0-windows-x64.exe --port 5000
 ```
 
 > 实时转封装（MKV / MPEG-TS → 浏览器原生 MP4）依赖 ffmpeg：原生二进制首次播放会自动下载
@@ -682,7 +716,10 @@ time, so every artifact of a release shares the same number:
 ### Docker
 
 ```bash
+# 固定版本
 docker pull ghcr.io/nickkk333/offlineu:2.0.0
+# 或跟随最新：每次推送 main 都会自动重建并更新 :latest
+docker pull ghcr.io/nickkk333/offlineu:latest
 docker run -d --name offlineu -p 5000:5000 \
   -v "/path/to/your/courses:/courses:ro" \
   -v offlineu-data:/app/data \
