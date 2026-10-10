@@ -22,15 +22,15 @@ services:
       # Re-encoding a lesson: never more than 720p (it only shrinks - a 480p
       # source stays 480p). 0 keeps the source size, "ultrafast" is the preset
       # for a really weak CPU.
-      # - OFFLINEU_TRANSCODE_HEIGHT=720
-      # - OFFLINEU_TRANSCODE_PRESET=veryfast
+      - OFFLINEU_TRANSCODE_HEIGHT=720
+      - OFFLINEU_TRANSCODE_PRESET=veryfast
       # Hardware encoding: auto (default) picks NVENC / Quick Sync / VAAPI /
       # AMF / V4L2 / RKMPP, off never asks, or name one to force it.
-      # - OFFLINEU_HWACCEL=auto
+      - OFFLINEU_HWACCEL=auto
       # Transport streams (.ts) a platform ships with deliberately broken packets
       # only play when re-encoded: set this to 1 if copying hands the damage to
       # the browser and playback fails.
-      # - OFFLINEU_FORCE_REENCODE=1
+      - OFFLINEU_FORCE_REENCODE=1
       # Optional: skip the picker and load a course at startup.
       # - AUTO_LOAD_COURSE=/courses/My Course
     volumes:
@@ -45,12 +45,12 @@ services:
     # nodes of the host. Uncomment the ones your machine has - a missing node
     # makes Docker refuse to start, so only enable what exists. Without any of
     # them OfflineU re-encodes in software, which still works, just slower.
-    # devices:
-    #   - /dev/dri:/dev/dri                  # Intel / AMD / Rockchip iGPU
-    #   - /dev/video0:/dev/video0            # ARM V4L2 memory-to-memory
-    #   - /dev/nvidia0:/dev/nvidia0          # NVIDIA NVENC
-    #   - /dev/nvidiactl:/dev/nvidiactl
-    #   - /dev/nvidia-uvm:/dev/nvidia-uvm
+    devices:
+      - /dev/dri:/dev/dri                  # Intel / AMD / Rockchip iGPU
+      - /dev/video0:/dev/video0            # ARM V4L2 memory-to-memory
+      - /dev/nvidia0:/dev/nvidia0          # NVIDIA NVENC
+      - /dev/nvidiactl:/dev/nvidiactl
+      - /dev/nvidia-uvm:/dev/nvidia-uvm
     # The container runs as uid 10001, but the image hands that uid the read
     # capability CAP_DAC_OVERRIDE: a mapped folder is readable even when it
     # belongs to root or to another NAS account, with no --privileged and no

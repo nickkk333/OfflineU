@@ -23,10 +23,10 @@ services:
       - OFFLINEU_CACHE_LIMIT_GB=20
       # Re-encoding: cap at 720p (only shrinks), and pick whichever hardware
       # encoder the machine has (NVENC / Quick Sync / VAAPI / AMF / V4L2 / RKMPP).
-      # - OFFLINEU_TRANSCODE_HEIGHT=720
-      # - OFFLINEU_HWACCEL=auto
+      - OFFLINEU_TRANSCODE_HEIGHT=720
+      - OFFLINEU_HWACCEL=auto
       # 课程平台的 .ts 切片若含故意损坏的包（复制后浏览器拒播），置 1 强制重编码。
-      # - OFFLINEU_FORCE_REENCODE=1
+      - OFFLINEU_FORCE_REENCODE=1
       - TZ=${OFFLINEU_TZ:-Asia/Shanghai}
     volumes:
       - ${OFFLINEU_COURSES:-/mnt/offlineu/courses}:/courses:ro
@@ -34,10 +34,10 @@ services:
       - ./cache:/app/cache
     # 硬件转码（OFFLINEU_HWACCEL=auto 时）需要宿主机对应的设备节点：只启用真实存在
     # 的那些，否则 Docker 会因设备不存在而拒绝启动。
-    # devices:
-    #   - /dev/dri:/dev/dri          # Intel / AMD / Rockchip 核显（VAAPI、QSV、RKMPP）
-    #   - /dev/video0:/dev/video0    # ARM V4L2（如树莓派）
-    #   - /dev/nvidia0:/dev/nvidia0  # NVIDIA（NVENC，还需 nvidiactl、nvidia-uvm）
-    #   - /dev/nvidiactl:/dev/nvidiactl
-    #   - /dev/nvidia-uvm:/dev/nvidia-uvm
+    devices:
+      - /dev/dri:/dev/dri          # Intel / AMD / Rockchip 核显（VAAPI、QSV、RKMPP）
+      - /dev/video0:/dev/video0    # ARM V4L2（如树莓派）
+      - /dev/nvidia0:/dev/nvidia0  # NVIDIA（NVENC，还需 nvidiactl、nvidia-uvm）
+      - /dev/nvidiactl:/dev/nvidiactl
+      - /dev/nvidia-uvm:/dev/nvidia-uvm
     restart: unless-stopped
