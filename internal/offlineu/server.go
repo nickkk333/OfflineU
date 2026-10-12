@@ -552,6 +552,17 @@ func (a *App) handleLessonAPI(w http.ResponseWriter, r *http.Request) {
 	if _, err := a.Progress.RecordAccess(course, lesson.RelPath); err != nil {
 		payload.StorageWarning = err.Error()
 		logf("warning: %v", err)
+	} else if !lesson.HasMedia() && !lesson.Completed {
+		// Documents, images and quizzes have no measurable "end" like a video
+		// does, so opening them counts as completing them. Media lessons keep
+		// their manual/ended completion: playback reports it via /api/progress.
+		autoCompleted := true
+		if _, err := a.Progress.Update(course, lesson.RelPath, &autoCompleted, nil); err != nil {
+			payload.StorageWarning = err.Error()
+			logf("warning: %v", err)
+		} else {
+			lesson.Completed = true
+		}
 	}
 	writeJSON(w, http.StatusOK, payload)
 }

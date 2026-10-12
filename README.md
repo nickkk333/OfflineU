@@ -26,6 +26,7 @@
   把你选中的那台设备推送当前视频或音频（并从已保存的位置续播）。纯标准库实现：
   SSDP 发现 + `SetAVTransportURI`/`Play` 这两个 SOAP 动作。
 * ✅ **课时进度追踪** —— 观看时长与完成状态自动保存，重看课时也不会丢失。
+  视频/音频播完自动标为完成；文档、图片、测验打开即标为完成（无"播完"可言）。
 * ♻️ **接着上次继续** —— 面板上的"继续学习"卡片直接跳回上次看到的那一节。
 * ⌨️ **键盘快捷键** —— 空格（播放/暂停）、← / →（快退/快进 10 秒）、↑ / ↓（音量）。
 * 💾 **本地优先、隐私优先** —— 100% 离线，进度就是你自己拥有的一份纯 JSON 文件。
@@ -144,9 +145,10 @@ My Course/
 | ---- | ------ | ---- |
 | 视频 | `.mp4` `.mkv` `.avi` `.mov` `.webm` `.m4v` `.flv` `.wmv` | 内联播放器、续播、播完标记完成 |
 | 音频 | `.mp3` `.wav` `.m4a` `.aac` `.ogg` `.flac` | 内联播放器、续播、播完标记完成 |
-| 文本 | `.txt` `.md` | `.txt` 原样显示；`.md` 由 Vditor 渲染（标题、表格、代码高亮、公式、图表） |
-| 内嵌 | `.html` `.htm` `.pdf` | 在 iframe 中渲染 |
-| 其他文档 | `.docx` `.doc` `.rtf` | 在页面内预览：`.docx` 保留标题/表格/图片，`.doc` 读取 Word 正文，`.rtf` 保留基本格式 |
+| 文本 | `.txt` `.md` | `.txt` 原样显示；`.md` 由 Vditor 渲染（标题、表格、代码高亮、公式、图表）；打开即标记完成 |
+| 内嵌 | `.html` `.htm` `.pdf` | 在 iframe 中渲染；打开即标记完成 |
+| 其他文档 | `.docx` `.doc` `.rtf` | 在页面内预览：`.docx` 保留标题/表格/图片，`.doc` 读取 Word 正文，`.rtf` 保留基本格式；打开即标记完成 |
+| 图片 | `.png` `.jpg` `.jpeg` `.gif` `.webp` `.bmp` `.svg` `.ico` `.avif` | 图片课时；打开即标记完成 |
 | 字幕 | `.srt` `.vtt` `.ass` `.sub` `.sbv` | 挂到同目录同名视频上，以 VTT 提供 |
 
 ---
@@ -176,7 +178,7 @@ Vue 前端调用的正是上一版暴露的那套 JSON API，所以每个接口�
 | GET | `/api/state` | 当前课程、课程树、最近课程（含完成计数）、`roots_display`、`needs_mount`/`mount_issue`/`roots_detail`/`mount_hint` 与版本号 |
 | GET | `/browse?path=<dir>` | 单级目录的 JSON 列表（选择器用） |
 | POST | `/load_course` | `{"course_path": "..."}` —— 解析文件夹并设为当前课程 |
-| GET | `/api/lesson?path=<lesson>&autoplay=1` | 课时数据：媒体/字幕 URL、文档、相邻课时、连播目标、存储告警 |
+| GET | `/api/lesson?path=<lesson>&autoplay=1` | 课时数据：媒体/字幕 URL、文档、相邻课时、连播目标、存储告警（非媒体课时打开即标为完成） |
 | GET | `/lesson/<lesson_path>` | 进入 SPA 课时页面的深链接 |
 | POST | `/api/progress` | 局部更新：`{"lesson_path", "completed", "progress_seconds"}`（省略的字段保持原值） |
 | GET | `/files/<path>` | 提供当前课程内的文件 |

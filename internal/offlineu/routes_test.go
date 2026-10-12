@@ -143,6 +143,64 @@ func TestLessonAPIMarksDocumentsThatCannotBePreviewed(t *testing.T) {
 	}
 }
 
+func TestOpeningADocumentMarksItCompleted(t *testing.T) {
+	env := newTestEnv(t)
+	env.loadCourse()
+
+	// A document has no measurable "end": opening it completes it, and the
+	// returned payload already reflects that.
+	document := struct {
+		Lesson *Lesson `json:"lesson"`
+	}{}
+	env.decode(env.lessonRequest("Section 1/02 - Notes.txt/Notes", false), &document)
+	if document.Lesson == nil || !document.Lesson.Completed {
+		t.Fatalf("document was not marked completed on open: %+v", document.Lesson)
+	}
+	entry := map[string]any{}
+	env.decodeRaw(env.progressJSON()["Section 1/02 - Notes.txt"], &entry)
+	if completed, _ := entry["completed"].(bool); !completed {
+		t.Errorf("document completion was not persisted: %v", entry)
+	}
+
+	// Opening it again keeps the flag (no toggle, no reset).
+	env.decode(env.lessonRequest("Section 1/02 - Notes.txt/Notes", false), &document)
+	if document.Lesson == nil || !document.Lesson.Completed {
+		t.Errorf("document completion was lost on reopen: %+v", document.Lesson)
+	}
+
+	// Media lessons are untouched: only playback (/api/progress or the ended
+	// event) may complete them.
+	media := struct {
+		Lesson *Lesson `json:"lesson"`
+	}{}
+	env.decode(env.lessonRequest("Section 1/01 - Intro.mp4/Intro", false), &media)
+	if media.Lesson == nil || media.Lesson.Completed {
+		t.Fatalf("media lesson must not auto-complete on open: %+v", media.Lesson)
+	}
+	// RecordAccess writes {last_accessed} only: no completed key may appear.
+	raw := map[string]any{}
+	if stored, exists := env.progressJSON()["Section 1/01 - Intro.mp4"]; exists {
+		env.decodeRaw(stored, &raw)
+		if _, exists := raw["completed"]; exists {
+			t.Errorf("opening media created a completed key: %v", raw)
+		}
+	}
+
+	// Images behave like documents: viewing them completes them too.
+	env.write("Section 3/cover.png", []byte{0x89, 0x50, 0x4e, 0x47})
+	env.loadCourse()
+	image := struct {
+		Lesson *Lesson `json:"lesson"`
+	}{}
+	env.decode(env.lessonRequest("Section 3/cover.png/Cover", false), &image)
+	if image.Lesson == nil || image.Lesson.LessonType != "image" {
+		t.Fatalf("image lesson not recognised: %+v", image.Lesson)
+	}
+	if !image.Lesson.Completed {
+		t.Errorf("image was not marked completed on open: %+v", image.Lesson)
+	}
+}
+
 func TestDocumentsAreServedInlineWithARenderableMime(t *testing.T) {
 	env := newTestEnv(t)
 	env.loadCourse()
