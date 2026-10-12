@@ -26,6 +26,7 @@ type App struct {
 	Config     *Config
 	Store      *CourseStore
 	Progress   *ProgressTracker
+	Exclusions *ExclusionStore
 	DLNA       *DLNAHub
 	Transcoder *Transcoder
 
@@ -46,6 +47,7 @@ func NewApp(cfg Config) *App {
 		Config:     &cfg,
 		Store:      store,
 		Progress:   &ProgressTracker{},
+		Exclusions: &ExclusionStore{},
 		DLNA:       NewDLNAHub(),
 		Transcoder: NewTranscoder(cfg.CacheDir, cfg.CacheLimit, cfg.Transcode),
 	}
@@ -86,6 +88,10 @@ func (a *App) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		a.handlePreview(w, r)
 	case requestPath == "/api/progress":
 		a.handleProgress(w, r)
+	case requestPath == "/api/exclude":
+		a.handleExclude(w, r)
+	case requestPath == "/api/restore_excluded":
+		a.handleRestoreExcluded(w, r)
 	case requestPath == "/api/reset_course":
 		a.handleResetCourseAPI(w, r)
 	case requestPath == "/api/forget_course":
@@ -241,6 +247,7 @@ func (a *App) handleState(w http.ResponseWriter, r *http.Request) {
 		"course":          a.summaryFor(course),
 		"tree":            course.Root,
 		"stats":           a.Progress.Stats(course),
+		"excluded":        course.Excluded,
 		"recent_courses":  []RecentCourse{},
 		"roots_display":   a.Config.RootDisplays(),
 		"needs_mount":     false,
@@ -277,7 +284,10 @@ func (a *App) recentCoursesWithProgress() []RecentCourse {
 	for index := range courses {
 		entry := &courses[index]
 		entry.DisplayPath = a.Config.DisplayPath(entry.Path)
-		entry.CompletedLessons = CountCompleted(a.Config.ProgressFileFor(entry.Path))
+		entry.CompletedLessons = CountCompleted(
+			a.Config.ProgressFileFor(entry.Path),
+			(&ExclusionStore{}).LoadFile(a.Config.ExcludedFileFor(entry.Path)),
+		)
 		if entry.TotalLessons == 0 {
 			if parsed, err := a.Config.ScanCourse(entry.Path); err == nil {
 				entry.TotalLessons = len(AllLessons(parsed.Root))
@@ -626,6 +636,130 @@ func (a *App) handleProgress(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// handleExclude hides one file lesson or folder from the course content. The
+// path stays on disk: it is only added to the per-course exclusion list and
+// pruned from the tree on every scan, so it survives restarts. The UI offers
+// the list back for one-click restores.
+func (a *App) handleExclude(w http.ResponseWriter, r *http.Request) {
+	if !requireMethod(w, r, http.MethodPost) {
+		return
+	}
+	course := a.Store.Get()
+	if course == nil {
+		writeError(w, http.StatusBadRequest, "no course loaded")
+		return
+	}
+	var payload struct {
+		Path string `json:"path"`
+	}
+	if err := decodeJSON(r, &payload); err != nil {
+		writeError(w, http.StatusBadRequest, "path is required")
+		return
+	}
+	relative := NormalizeRel(payload.Path)
+	if relative == "" {
+		writeError(w, http.StatusBadRequest, "path is required")
+		return
+	}
+	if !a.exclusionTargetExists(course, relative) {
+		writeError(w, http.StatusNotFound, "path not found in this course")
+		return
+	}
+	excluded := normalizeExcluded(append(a.Exclusions.Load(course), relative))
+	if err := a.Exclusions.Save(course, excluded); err != nil {
+		var storage *ProgressStorageError
+		if errors.As(err, &storage) {
+			writeError(w, http.StatusInternalServerError, storage.Message)
+			return
+		}
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	a.reloadCourse(course.Path)
+	writeJSON(w, http.StatusOK, map[string]any{"success": true, "excluded": excluded})
+}
+
+// handleRestoreExcluded brings back excluded files/folders: one entry (path)
+// or the whole list (all: true). Restored entries reappear on the next scan.
+func (a *App) handleRestoreExcluded(w http.ResponseWriter, r *http.Request) {
+	if !requireMethod(w, r, http.MethodPost) {
+		return
+	}
+	course := a.Store.Get()
+	if course == nil {
+		writeError(w, http.StatusBadRequest, "no course loaded")
+		return
+	}
+	var payload struct {
+		Path string `json:"path"`
+		All  bool   `json:"all"`
+	}
+	if err := decodeJSON(r, &payload); err != nil {
+		writeError(w, http.StatusBadRequest, "path is required")
+		return
+	}
+	stored := a.Exclusions.Load(course)
+	var excluded []string
+	if payload.All {
+		excluded = []string{}
+	} else {
+		relative := NormalizeRel(payload.Path)
+		if relative == "" {
+			writeError(w, http.StatusBadRequest, "path is required")
+			return
+		}
+		excluded = []string{}
+		for _, item := range stored {
+			if item == relative {
+				continue
+			}
+			excluded = append(excluded, item)
+		}
+		if len(excluded) == len(stored) {
+			writeError(w, http.StatusNotFound, "path is not excluded")
+			return
+		}
+	}
+	if err := a.Exclusions.Save(course, excluded); err != nil {
+		var storage *ProgressStorageError
+		if errors.As(err, &storage) {
+			writeError(w, http.StatusInternalServerError, storage.Message)
+			return
+		}
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	a.reloadCourse(course.Path)
+	writeJSON(w, http.StatusOK, map[string]any{"success": true, "excluded": excluded})
+}
+
+// exclusionTargetExists reports whether relative names a lesson or a folder
+// of the course. Folders are matched by their course relative path; the
+// course root itself can never be excluded.
+func (a *App) exclusionTargetExists(course *Course, relative string) bool {
+	if FindLessonInTree(course.Root, relative) != nil {
+		return true
+	}
+	full, ok := ResolveInside(course.Path, relative)
+	if !ok {
+		return false
+	}
+	info, err := os.Stat(full)
+	if err != nil || !info.IsDir() {
+		return false
+	}
+	cleaned := filepath.Clean(full)
+	return cleaned != filepath.Clean(course.Path)
+}
+
+// reloadCourse re-scans the active course so an exclusion change takes effect
+// immediately (tree, stats and the excluded list of /api/state).
+func (a *App) reloadCourse(coursePath string) {
+	if parsed, err := a.Config.ScanCourse(coursePath); err == nil {
+		a.Store.Set(parsed)
+	}
+}
+
 // handleResetCourse clears the active course but keeps it in the recent list.
 func (a *App) handleResetCourse(w http.ResponseWriter, r *http.Request) {
 	if !requireMethod(w, r, http.MethodGet) {
@@ -704,6 +838,9 @@ func (a *App) forgetCourse(raw string) {
 	}
 	if err := a.Progress.Delete(a.Config.ProgressFileFor(coursePath)); err != nil {
 		logf("warning: cannot delete the progress of %s: %v", coursePath, err)
+	}
+	if err := a.Exclusions.Delete(a.Config.ExcludedFileFor(coursePath)); err != nil {
+		logf("warning: cannot delete the exclusions of %s: %v", coursePath, err)
 	}
 }
 

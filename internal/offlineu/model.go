@@ -281,6 +281,8 @@ type Course struct {
 	Path              string
 	Root              *DirectoryNode
 	ProgressFile      string
+	ExcludedFile      string
+	Excluded          []string
 	LastAccessedPath  string
 	LastAccessedURL   string
 	LastAccessedTitle string

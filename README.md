@@ -12,6 +12,8 @@
 ## ✨ 功能特性
 
 * 📁 **目录浏览与文件夹解析** —— 点一下就能选中一门课程，OfflineU 会把它的结构映射成可浏览的课程树。
+  课程内容里每个文件、每个文件夹都能单独隐藏（文件只从课程里消失，磁盘原文件不动），
+  内容区顶部可查看已隐藏名单并一键恢复；隐藏后进度、搜索与完成率都不再计入它们。
 * 🧷 **记住你的课程** —— 选中的课程会写入磁盘，所以回到首页、切换课程或重启 OfflineU 都不会丢。
   每个被记住的课程还会显示完成百分比，一眼就能看出该接着学哪一门。
 * 🎥 **视频与音频播放器** —— 内置播放器支持断点续播、观看时长统计，播完自动标记完成。
@@ -189,7 +191,9 @@ Vue 前端调用的正是上一版暴露的那套 JSON API，所以每个接口�
 | GET | `/api/preview?path=<doc>` | 把 `.docx`/`.doc`/`.rtf` 转成自带样式的内联 HTML 页（不包含任何脚本） |
 | GET | `/health` | `{"status": "healthy"}`（Docker 健康检查用） |
 | POST | `/api/reset_course` | 回到选择器；课程仍保留在最近列表里 |
-| POST | `/api/forget_course` | `{"path": "..."}` —— 从最近列表移除该课程并删除其进度 |
+| POST | `/api/exclude` | `{"path": "<课程相对路径>"}` —— 从课程内容隐藏一个文件课时或整个文件夹（磁盘文件不动） |
+| POST | `/api/restore_excluded` | `{"path": "..."}` 恢复一项、`{"all": true}` 全部恢复 |
+| POST | `/api/forget_course` | `{"path": "..."}` —— 从最近列表移除该课程并删除其进度（含排除名单） |
 | GET | `/reset_course`, `/forget_course` | 上述两个接口的旧版重定向变体 |
 | GET | `/api/dlna/devices` | 局域网上发现的投屏设备（`?refresh=1` 重新发起 SSDP 搜索） |
 | POST | `/api/dlna/cast` | `{"device": "<udn>", "lesson_path": "...", "start_seconds": 30, "transcode": "auto"\|"on"\|"off"}` —— 把一节推到投屏设备；播完会自动接下一节；应答中的 `converted` 说明是否用了转码流 |

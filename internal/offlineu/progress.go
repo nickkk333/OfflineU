@@ -278,9 +278,11 @@ func (t *ProgressTracker) Stats(course *Course) Stats {
 }
 
 // CountCompleted reads the progress file stored at path and returns how many
-// lessons were marked as completed. A missing or unreadable file counts as 0, so
-// callers can use it to summarise courses that were never opened.
-func CountCompleted(path string) int {
+// lessons were marked as completed. Entries listed in excluded are ignored, so
+// hiding lessons from a course also drops their completions from the picker.
+// A missing or unreadable file counts as 0, so callers can use it to
+// summarise courses that were never opened.
+func CountCompleted(path string, excluded []string) int {
 	if strings.TrimSpace(path) == "" {
 		return 0
 	}
@@ -292,11 +294,19 @@ func CountCompleted(path string) int {
 	if err := json.Unmarshal(data, parsed); err != nil {
 		return 0
 	}
+	hidden := map[string]bool{}
+	for _, relative := range normalizeExcluded(excluded) {
+		hidden[relative] = true
+	}
 	completed := 0
-	for _, entry := range parsed.Entries {
-		if entry != nil && entry.Completed != nil && *entry.Completed {
-			completed++
+	for key, entry := range parsed.Entries {
+		if entry == nil || entry.Completed == nil || !*entry.Completed {
+			continue
 		}
+		if hidden[NormalizeRel(key)] {
+			continue
+		}
+		completed++
 	}
 	return completed
 }

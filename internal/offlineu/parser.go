@@ -9,6 +9,9 @@ import (
 )
 
 // ScanCourse parses a directory into a Course (tree + lessons + progress file).
+// Excluded files/folders (see ExclusionStore) are pruned from the tree, so
+// they never show up in the course content; the raw list is kept on the
+// Course so the UI can offer to restore entries.
 func (c *Config) ScanCourse(coursePath string) (*Course, error) {
 	base, err := filepath.Abs(ExpandHome(coursePath))
 	if err != nil {
@@ -23,12 +26,17 @@ func (c *Config) ScanCourse(coursePath string) (*Course, error) {
 	}
 
 	root := c.buildDirectoryTree(base, base, 0)
-	return &Course{
+	course := &Course{
 		Name:         filepath.Base(base),
 		Path:         base,
 		Root:         root,
 		ProgressFile: c.ProgressFileFor(base),
-	}, nil
+		ExcludedFile: c.ExcludedFileFor(base),
+	}
+	store := &ExclusionStore{}
+	course.Excluded = store.LoadFile(course.ExcludedFile)
+	ApplyExclusions(course.Root, course.Excluded)
+	return course, nil
 }
 
 func (c *Config) buildDirectoryTree(coursePath, currentPath string, depth int) *DirectoryNode {

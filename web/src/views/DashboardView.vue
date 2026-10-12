@@ -2,7 +2,7 @@
 import { computed, ref } from 'vue'
 import CourseTree from '../components/CourseTree.vue'
 import ProgressBar from '../components/ProgressBar.vue'
-import { lessonRoute, lessonFileName } from '../api.js'
+import { api, lessonRoute, lessonFileName } from '../api.js'
 import { refreshState, resetCourse, store } from '../store.js'
 import { t } from '../i18n.js'
 import { useToast } from '../composables/useToast.js'
@@ -10,6 +10,7 @@ import { useToast } from '../composables/useToast.js'
 const toast = useToast()
 const filter = ref('')
 const busy = ref(false)
+const pendingExclude = ref(null)
 
 const stats = computed(
   () =>
@@ -21,6 +22,8 @@ const stats = computed(
       last_accessed_title: ''
     }
 )
+
+const excluded = computed(() => store.excluded || [])
 
 const remaining = computed(() => Math.max(0, stats.value.total_lessons - stats.value.completed_lessons))
 
@@ -49,6 +52,58 @@ async function changeCourse() {
 async function reload() {
   await refreshState()
   toast.info(t('toast.progressRefreshed'))
+}
+
+// Hiding is a two-step flow: the tree emits what was clicked, a small
+// confirm dialog names it, and only then the backend exclusion is written.
+function askExclude(target) {
+  pendingExclude.value = target
+}
+
+function cancelExclude() {
+  pendingExclude.value = null
+}
+
+async function confirmExclude() {
+  const target = pendingExclude.value
+  if (!target) return
+  pendingExclude.value = null
+  busy.value = true
+  try {
+    await api.exclude(target.path)
+    await refreshState()
+    toast.success(t('toast.excluded', { name: target.name || target.path }))
+  } catch (error) {
+    toast.error(error.message)
+  } finally {
+    busy.value = false
+  }
+}
+
+async function restoreOne(path) {
+  busy.value = true
+  try {
+    await api.restoreExcluded(path)
+    await refreshState()
+    toast.success(t('toast.restored', { name: path }))
+  } catch (error) {
+    toast.error(error.message)
+  } finally {
+    busy.value = false
+  }
+}
+
+async function restoreAll() {
+  busy.value = true
+  try {
+    await api.restoreAllExcluded()
+    await refreshState()
+    toast.success(t('toast.restoredAll'))
+  } catch (error) {
+    toast.error(error.message)
+  } finally {
+    busy.value = false
+  }
 }
 </script>
 
@@ -106,11 +161,51 @@ async function reload() {
         <span class="spacer"></span>
         <input v-model="filter" class="input dash__search" type="search" :placeholder="t('dash.searchPlaceholder')" />
       </div>
+      <div v-if="excluded.length" class="excluded">
+        <div class="excluded__head">
+          <span class="faint">{{ t('dash.excludedTitle', { count: excluded.length }) }}</span>
+          <span class="spacer"></span>
+          <button type="button" class="btn btn--ghost btn--sm" :disabled="busy" @click="restoreAll">
+            {{ t('dash.restoreAll') }}
+          </button>
+        </div>
+        <ul class="excluded__list">
+          <li v-for="path in excluded" :key="path" class="excluded__item">
+            <span class="mono excluded__path">{{ path }}</span>
+            <span class="spacer"></span>
+            <button type="button" class="btn btn--ghost btn--sm" :disabled="busy" @click="restoreOne(path)">
+              {{ t('dash.restore') }}
+            </button>
+          </li>
+        </ul>
+      </div>
       <div class="dash__tree">
-        <CourseTree v-if="store.tree" :node="store.tree" :filter="filter" />
+        <CourseTree v-if="store.tree" :node="store.tree" :filter="filter" @exclude="askExclude" />
         <p v-else class="empty-state">{{ t('dash.emptyContent') }}</p>
       </div>
     </section>
+
+    <div v-if="pendingExclude" class="confirm-backdrop" @click.self="cancelExclude">
+      <div class="confirm" role="alertdialog" aria-modal="true">
+        <div class="confirm__title">{{ t('dash.excludeConfirmTitle') }}</div>
+        <p class="confirm__text">
+          {{
+            pendingExclude.kind === 'folder'
+              ? t('dash.excludeFolderText', { name: pendingExclude.name || pendingExclude.path })
+              : t('dash.excludeFileText', { name: pendingExclude.name || pendingExclude.path })
+          }}
+        </p>
+        <span class="confirm__path mono">{{ pendingExclude.path }}</span>
+        <div class="confirm__actions">
+          <button type="button" class="btn btn--ghost" :disabled="busy" @click="cancelExclude">
+            {{ t('common.cancel') }}
+          </button>
+          <button type="button" class="btn btn--danger" :disabled="busy" @click="confirmExclude">
+            {{ t('dash.excludeConfirm') }}
+          </button>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -256,6 +351,93 @@ async function reload() {
 
 .dash__tree :deep(.node > .node__header) {
   background: rgba(255, 255, 255, 0.05);
+}
+
+.excluded {
+  margin-bottom: 16px;
+  padding: 12px 14px;
+  border: 1px dashed rgba(148, 163, 184, 0.35);
+  border-radius: 13px;
+  background: rgba(148, 163, 184, 0.06);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.excluded__head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.excluded__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.excluded__item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.excluded__path {
+  font-size: 0.85rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.confirm-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: rgba(2, 6, 16, 0.6);
+  backdrop-filter: blur(3px);
+}
+
+.confirm {
+  width: min(440px, 100%);
+  padding: 22px;
+  border-radius: 18px;
+  border: 1px solid var(--border);
+  background: var(--surface-strong);
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.45);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.confirm__title {
+  font-weight: 700;
+}
+
+.confirm__text {
+  color: var(--text-muted);
+  font-size: 0.92rem;
+}
+
+.confirm__path {
+  font-size: 0.82rem;
+  color: var(--text-faint);
+  word-break: break-all;
+}
+
+.confirm__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 4px;
 }
 
 @media (max-width: 860px) {

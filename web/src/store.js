@@ -11,6 +11,7 @@ export const store = reactive({
   course: null,
   tree: null,
   stats: null,
+  excluded: [],
   recentCourses: [],
   roots: [],
   rootsDisplay: [],
@@ -31,6 +32,7 @@ function applyState(payload) {
   store.course = payload.course || null
   store.tree = payload.tree || null
   store.stats = payload.stats || null
+  store.excluded = payload.excluded || []
   store.recentCourses = payload.recent_courses || []
   store.roots = payload.roots || []
   store.rootsDisplay = payload.roots_display || []

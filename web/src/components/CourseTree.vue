@@ -7,8 +7,13 @@ import { t } from '../i18n.js'
 const props = defineProps({
   node: { type: Object, required: true },
   depth: { type: Number, default: 0 },
-  filter: { type: String, default: '' }
+  filter: { type: String, default: '' },
+  // Course relative path of this folder ('' for the course root): the value
+  // the backend expects when a whole folder is excluded.
+  relPath: { type: String, default: '' }
 })
+
+const emit = defineEmits(['exclude'])
 
 const open = ref(props.depth < 1)
 const query = computed(() => props.filter.trim().toLowerCase())
@@ -33,6 +38,15 @@ function hasVisibleContent(node) {
 const visibleChildren = computed(() => (props.node.children || []).filter(hasVisibleContent))
 const visible = computed(() => (props.node.lessons || []).some(matches) || visibleChildren.value.length > 0)
 const itemCount = computed(() => (props.node.children || []).length + (props.node.lessons || []).length)
+
+// Course relative path of a child folder: the parent prefix plus the folder
+// name (nodes only carry an absolute path). Matches the backend pruning rule,
+// so excluding a folder hides its whole subtree.
+function childRelPath(child) {
+  const name = String(child.path || '').split('/').pop().split('\\').pop()
+  const joined = props.relPath ? `${props.relPath}/${name}` : name
+  return joined.replace(/\\/g, '/').replace(/^\/+/, '')
+}
 
 watch(query, (value) => {
   if (value && visible.value) open.value = true
@@ -61,6 +75,16 @@ const stats = computed(() => props.node.stats || { completed_lessons: 0, total_l
         </span>
         <span class="faint">{{ stats.completed_lessons }}/{{ stats.total_lessons }}</span>
       </span>
+      <button
+        v-if="relPath"
+        type="button"
+        class="icon-btn node__exclude"
+        :title="t('tree.excludeFolder')"
+        :aria-label="t('tree.excludeFolder')"
+        @click.stop="$emit('exclude', { kind: 'folder', path: relPath, name: node.name })"
+      >
+        ✕
+      </button>
     </button>
 
     <Transition name="tree">
@@ -71,22 +95,37 @@ const stats = computed(() => props.node.stats || { completed_lessons: 0, total_l
           :node="child"
           :depth="depth + 1"
           :filter="filter"
+          :rel-path="childRelPath(child)"
+          @exclude="$emit('exclude', $event)"
         />
 
-        <RouterLink
+        <div
           v-for="lesson in lessons"
           :key="lesson.rel_path"
-          class="lesson"
-          :class="{ 'lesson--completed': lesson.completed }"
-          :to="lessonRoute(lesson.url)"
+          class="lesson-row"
         >
-          <TypeIcon :type="lesson.lesson_type" :with-label="false" />
-          <span class="lesson__title">{{ lessonFileName(lesson) }}</span>
-          <span v-if="lesson.progress_seconds" class="faint">{{ formatTime(lesson.progress_seconds) }}</span>
-          <span class="spacer"></span>
-          <span v-if="lesson.completed" class="lesson__done" :title="t('tree.completed')">✓</span>
-          <span v-else class="lesson__pending" :title="t('tree.notCompleted')"></span>
-        </RouterLink>
+          <RouterLink
+            class="lesson"
+            :class="{ 'lesson--completed': lesson.completed }"
+            :to="lessonRoute(lesson.url)"
+          >
+            <TypeIcon :type="lesson.lesson_type" :with-label="false" />
+            <span class="lesson__title">{{ lessonFileName(lesson) }}</span>
+            <span v-if="lesson.progress_seconds" class="faint">{{ formatTime(lesson.progress_seconds) }}</span>
+            <span class="spacer"></span>
+            <span v-if="lesson.completed" class="lesson__done" :title="t('tree.completed')">✓</span>
+            <span v-else class="lesson__pending" :title="t('tree.notCompleted')"></span>
+          </RouterLink>
+          <button
+            type="button"
+            class="icon-btn lesson-row__exclude"
+            :title="t('tree.excludeFile')"
+            :aria-label="t('tree.excludeFile')"
+            @click="$emit('exclude', { kind: 'file', path: lesson.rel_path, name: lessonFileName(lesson) })"
+          >
+            ✕
+          </button>
+        </div>
       </div>
     </Transition>
   </div>
@@ -139,6 +178,48 @@ const stats = computed(() => props.node.stats || { completed_lessons: 0, total_l
 .node__name {
   font-weight: 600;
   letter-spacing: -0.01em;
+}
+
+.icon-btn {
+  display: inline-grid;
+  place-items: center;
+  min-width: 28px;
+  height: 28px;
+  padding: 0 7px;
+  border-radius: 9px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-faint);
+  font-size: 0.85rem;
+  cursor: pointer;
+  transition: all var(--transition);
+}
+
+.icon-btn:hover {
+  color: #fca5a5;
+  border-color: rgba(248, 113, 113, 0.35);
+  background: rgba(248, 113, 113, 0.12);
+}
+
+.lesson-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.lesson-row .lesson {
+  flex: 1;
+  min-width: 0;
+}
+
+.lesson-row__exclude {
+  flex: none;
+  opacity: 0;
+}
+
+.lesson-row:hover .lesson-row__exclude,
+.lesson-row:focus-within .lesson-row__exclude {
+  opacity: 1;
 }
 
 .node__stats {

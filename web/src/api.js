@@ -52,6 +52,12 @@ export const api = {
     }
     return request('/api/progress', { method: 'POST', body: JSON.stringify(payload) })
   },
+  // Course content exclusions: hide a file lesson or a whole folder from the
+  // course tree. The entries stay on disk and come back via restoreExcluded.
+  exclude: (path) => request('/api/exclude', { method: 'POST', body: JSON.stringify({ path }) }),
+  restoreExcluded: (path) =>
+    request('/api/restore_excluded', { method: 'POST', body: JSON.stringify({ path }) }),
+  restoreAllExcluded: () => request('/api/restore_excluded', { method: 'POST', body: JSON.stringify({ all: true }) }),
   // DLNA / UPnP casting: the server does the network search, the SPA only picks
   // a device and asks the server to hand it the lesson's media URL.
   castDevices: (refresh) => request(`/api/dlna/devices${refresh ? '?refresh=1' : ''}`),

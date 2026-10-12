@@ -147,12 +147,21 @@ const en = {
     emptyText: 'Your position is remembered automatically, even after a restart.',
     contentTitle: '🧭 Course content',
     searchPlaceholder: 'Search lessons…',
-    emptyContent: 'This course has no supported files yet.'
+    emptyContent: 'This course has no supported files yet.',
+    excludedTitle: '🙈 Hidden ({count}) — files stay on disk and can be restored',
+    restore: 'Restore',
+    restoreAll: 'Restore all',
+    excludeConfirmTitle: 'Hide from course content?',
+    excludeConfirm: 'Hide',
+    excludeFileText: '“{name}” will no longer appear in the course content, progress or search. The file itself is kept.',
+    excludeFolderText: 'The whole folder “{name}” (including everything inside) will no longer appear in the course content. Files on disk are kept.'
   },
   tree: {
     items: '{count} items',
     completed: 'Completed',
-    notCompleted: 'Not completed yet'
+    notCompleted: 'Not completed yet',
+    excludeFile: 'Hide this file from the course',
+    excludeFolder: 'Hide this folder from the course'
   },
   progress: {
     lessonsCompleted: 'lessons completed'
@@ -238,6 +247,9 @@ const en = {
     autoplayBlocked: 'Autoplay was blocked by the browser — press play to continue',
     couldNotLoadFile: 'Could not load this file: {message}',
     markedCompleted: 'Lesson marked as completed',
+    excluded: 'Hidden “{name}” from the course',
+    restored: 'Restored “{name}”',
+    restoredAll: 'All hidden entries restored',
     streamFailed: 'Streaming failed — falling back to the file as it is',
     skipForward: 'Fast-forward 10 s',
     skipBack: 'Rewind 10 s',
@@ -378,12 +390,21 @@ const zh = {
     emptyText: '你的学习位置会自动记录，重启后依然保留。',
     contentTitle: '🧭 课程内容',
     searchPlaceholder: '搜索课程…',
-    emptyContent: '这门课程暂时没有支持的文件。'
+    emptyContent: '这门课程暂时没有支持的文件。',
+    excludedTitle: '🙈 已隐藏（{count}）——文件仍在磁盘上，可随时恢复',
+    restore: '恢复',
+    restoreAll: '全部恢复',
+    excludeConfirmTitle: '从课程内容中隐藏？',
+    excludeConfirm: '隐藏',
+    excludeFileText: '“{name}”将不再出现在课程内容、进度与搜索中，磁盘上的文件会保留。',
+    excludeFolderText: '整个文件夹“{name}”（含其中全部内容）将不再出现在课程内容中，磁盘上的文件会保留。'
   },
   tree: {
     items: '{count} 项',
     completed: '已完成',
-    notCompleted: '尚未完成'
+    notCompleted: '尚未完成',
+    excludeFile: '从课程中隐藏该文件',
+    excludeFolder: '从课程中隐藏该文件夹'
   },
   progress: {
     lessonsCompleted: '节课已完成'
@@ -467,6 +488,9 @@ const zh = {
     autoplayBlocked: '浏览器阻止了自动播放 —— 请点击播放按钮继续',
     couldNotLoadFile: '无法加载该文件：{message}',
     markedCompleted: '已标记为完成',
+    excluded: '已从课程中隐藏“{name}”',
+    restored: '已恢复“{name}”',
+    restoredAll: '已恢复全部隐藏内容',
     streamFailed: '分片播放失败 —— 已回退为直接播放原文件',
     skipForward: '快进 10 秒',
     skipBack: '后退 10 秒',
