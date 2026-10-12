@@ -75,6 +75,11 @@ export function resolveMarkdownUrl(target, base) {
 
 const IMAGE_PATTERN = /!\[([^\]]*)\]\(([^)\s]+)\)/g
 const LINK_PATTERN = /\[([^\]]+)\]\(([^)\s]+)\)/g
+// Raw HTML is common in hand-written documents (<img src="images/pad.png">).
+// Vditor keeps such tags exactly as they are, so their src/href has to be
+// rewritten too - a relative path left in place resolves against the lesson
+// URL (…/README.md/images/…) and 404s, which looks like a missing image.
+const HTML_ATTRIBUTE_PATTERN = /(<(?:img|a)\b[^>]*?\b(?:src|href)\s*=\s*)(?:"([^"]*)"|'([^']*)'|([^\s>]+))/gi
 
 function rewriteRelativeTargets(markdown, base) {
   return String(markdown ?? '')
@@ -87,6 +92,13 @@ function rewriteRelativeTargets(markdown, base) {
       if (match.startsWith('!')) return match
       const url = resolveMarkdownUrl(href, base)
       return url ? `[${label}](${url})` : match
+    })
+    .replace(HTML_ATTRIBUTE_PATTERN, (match, prefix, doubleQuoted, singleQuoted, bare) => {
+      const raw = doubleQuoted ?? singleQuoted ?? bare
+      const url = resolveMarkdownUrl(raw, base)
+      if (!url || url === raw) return match
+      const quote = doubleQuoted !== undefined ? '"' : singleQuoted !== undefined ? "'" : ''
+      return `${prefix}${quote}${url}${quote}`
     })
 }
 
