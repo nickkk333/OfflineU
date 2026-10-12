@@ -2,7 +2,7 @@
 import { computed, ref } from 'vue'
 import CourseTree from '../components/CourseTree.vue'
 import ProgressBar from '../components/ProgressBar.vue'
-import { lessonRoute } from '../api.js'
+import { lessonRoute, lessonFileName } from '../api.js'
 import { refreshState, resetCourse, store } from '../store.js'
 import { t } from '../i18n.js'
 import { useToast } from '../composables/useToast.js'
@@ -23,6 +23,16 @@ const stats = computed(
 )
 
 const remaining = computed(() => Math.max(0, stats.value.total_lessons - stats.value.completed_lessons))
+
+// The resume card shows the lesson the same way the tree does, extension
+// included. last_accessed_path is the lesson's rel_path, hence a valid input.
+const resumeName = computed(
+  () =>
+    lessonFileName({
+      title: stats.value.last_accessed_title,
+      rel_path: stats.value.last_accessed_path
+    }) || stats.value.last_accessed_path
+)
 
 async function changeCourse() {
   busy.value = true
@@ -79,7 +89,7 @@ async function reload() {
       <div class="card dash__resume" :class="{ 'dash__resume--empty': !stats.last_accessed_url }">
         <template v-if="stats.last_accessed_url">
           <span class="faint">{{ t('dash.resumeLabel') }}</span>
-          <h3>{{ stats.last_accessed_title || stats.last_accessed_path }}</h3>
+          <h3>{{ resumeName }}</h3>
           <RouterLink class="btn" :to="lessonRoute(stats.last_accessed_url)">{{ t('dash.resumeButton') }}</RouterLink>
         </template>
         <template v-else>

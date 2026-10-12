@@ -89,6 +89,19 @@ export function lessonRoute(lessonUrl) {
   return `/lesson/${lessonUrl.split('/').map(encodeURIComponent).join('/')}`
 }
 
+// The server keeps the raw file name in rel_path ("Section 1/01 - Intro.mp4")
+// and a tidied-up title in title ("Intro"). Lists want both, so the extension is
+// put back on the title: "Intro.mp4", i.e. the name the file has on disk.
+export function lessonFileName(lesson) {
+  if (!lesson) return ''
+  const relative = lesson.rel_path || lesson.path || ''
+  const base = relative.split('/').pop() || ''
+  const dot = base.lastIndexOf('.')
+  const extension = dot > 0 ? base.slice(dot) : ''
+  const name = lesson.title || (dot > 0 ? base.slice(0, dot) : base)
+  return name + extension
+}
+
 export function formatTime(totalSeconds) {
   const seconds = Math.max(0, Math.floor(totalSeconds || 0))
   const minutes = Math.floor(seconds / 60)

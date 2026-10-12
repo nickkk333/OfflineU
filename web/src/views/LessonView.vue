@@ -5,7 +5,7 @@ import TypeIcon from '../components/TypeIcon.vue'
 import LanguageSwitch from '../components/LanguageSwitch.vue'
 import CastMenu from '../components/CastMenu.vue'
 import CastBar from '../components/CastBar.vue'
-import { api, formatTime, lessonRoute, navigateFull } from '../api.js'
+import { api, formatTime, lessonFileName, lessonRoute, navigateFull } from '../api.js'
 import { renderMarkdownInto } from '../vditor.js'
 import { refreshState, store } from '../store.js'
 import { locale, t, translateServerMessage } from '../i18n.js'
@@ -55,6 +55,14 @@ const markdownPanes = new Map()
 const resourceUrls = new Set()
 const imageFullscreen = ref(false)
 const imageWrap = ref(null)
+// Image lessons are zoomable. The <img> is resized instead of being scaled with
+// a transform: the element then really gets bigger, so the figure around it
+// grows scrollbars and a magnified screenshot is panned by plain scrolling.
+const IMAGE_ZOOM_MIN = 0.25
+const IMAGE_ZOOM_MAX = 8
+const IMAGE_ZOOM_STEP = 0.25
+const imageZoom = ref(1)
+const imageZoomLabel = computed(() => `${Math.round(imageZoom.value * 100)}%`)
 const completed = ref(false)
 // Which document iframe is shown "fullscreen" (a CSS class that stretches the
 // wrapper to the viewport - the real Fullscreen API is also attempted).
@@ -267,6 +275,8 @@ async function load(path) {
   textContents.value = {}
   markdownNotice.value = {}
   resourceUrls.clear()
+  // Every lesson starts at 100 %, whatever the previous image was zoomed to.
+  resetImageZoom()
   castEndedHandled = false
   // While another lesson (or another course) is being loaded, the player of
   // the previous one still fires pause/timeupdate: those must not be saved
@@ -590,6 +600,33 @@ function officePreviewUrl(resource) {
   return `/api/preview?path=${encodeURIComponent(resource.url)}`
 }
 
+// Keeps the zoom on a clean percentage (0.25 … 8). The steps are deliberately
+// coarse: the goal is reading a screenshot, not pixel-hunting.
+function setImageZoom(value) {
+  const clamped = Math.min(IMAGE_ZOOM_MAX, Math.max(IMAGE_ZOOM_MIN, value))
+  imageZoom.value = Math.round(clamped * 100) / 100
+}
+
+function zoomImageIn() {
+  setImageZoom(imageZoom.value + (imageZoom.value < 1 ? IMAGE_ZOOM_STEP : 0.5))
+}
+
+function zoomImageOut() {
+  setImageZoom(imageZoom.value - (imageZoom.value <= 1 ? IMAGE_ZOOM_STEP : 0.5))
+}
+
+function resetImageZoom() {
+  setImageZoom(1)
+}
+
+// Ctrl/⌘ + wheel zooms like in an editor; a bare wheel keeps scrolling the
+// (often long) image, which is what a reader expects.
+function onImageWheel(event) {
+  if (!event.ctrlKey && !event.metaKey) return
+  event.preventDefault()
+  setImageZoom(imageZoom.value * (event.deltaY < 0 ? 1.1 : 1 / 1.1))
+}
+
 async function toggleImageFullscreen() {
   imageFullscreen.value = !imageFullscreen.value
   await nextTick()
@@ -773,7 +810,7 @@ onBeforeUnmount(() => {
       </header>
 
       <section class="card lesson-view__head">
-        <h1>{{ lesson.title }}</h1>
+        <h1>{{ lessonFileName(lesson) }}</h1>
         <div class="lesson-view__meta">
           <span class="mono faint">{{ lessonLocation }}</span>
           <span v-if="lesson.progress_seconds > 0" class="badge">
@@ -871,18 +908,59 @@ onBeforeUnmount(() => {
         </audio>
       </section>
 
-      <section v-else-if="lesson.image_file" class="card stack image-lesson">
-        <figure
-          class="image-lesson__figure"
-          :class="{ 'image-lesson__figure--fullscreen': imageFullscreen }"
-          ref="imageWrap"
-        >
-          <img class="image-lesson__img" :src="lesson.image_src" :alt="lesson.title" />
+      <!-- The whole card goes fullscreen, not just the image: the zoom buttons
+           and the exit button live in the toolbar under the figure and have to
+           stay reachable while the overlay (or the real fullscreen) is up. -->
+      <section
+        v-else-if="lesson.image_file"
+        class="card stack image-lesson"
+        :class="{ 'image-lesson--fullscreen': imageFullscreen }"
+        ref="imageWrap"
+      >
+        <figure class="image-lesson__figure" :class="{ 'image-lesson__figure--zoomed': imageZoom > 1 }">
+          <img
+            class="image-lesson__img"
+            :src="lesson.image_src"
+            :alt="lessonFileName(lesson)"
+            :style="{ width: imageZoom * 100 + '%' }"
+            @wheel="onImageWheel"
+            @dblclick="resetImageZoom"
+          />
         </figure>
         <div class="toolbar toolbar--sub">
           <a class="btn btn--sm btn--ghost" :href="lesson.image_src" target="_blank" rel="noopener">
             {{ t('lesson.openInNewTabShort') }}
           </a>
+          <div class="image-zoom">
+            <button
+              type="button"
+              class="btn btn--sm btn--ghost"
+              :disabled="imageZoom <= IMAGE_ZOOM_MIN"
+              :title="t('lesson.zoomOut')"
+              :aria-label="t('lesson.zoomOut')"
+              @click="zoomImageOut"
+            >
+              −
+            </button>
+            <button
+              type="button"
+              class="btn btn--sm btn--ghost image-zoom__level"
+              :title="t('lesson.zoomReset')"
+              @click="resetImageZoom"
+            >
+              {{ imageZoomLabel }}
+            </button>
+            <button
+              type="button"
+              class="btn btn--sm btn--ghost"
+              :disabled="imageZoom >= IMAGE_ZOOM_MAX"
+              :title="t('lesson.zoomIn')"
+              :aria-label="t('lesson.zoomIn')"
+              @click="zoomImageIn"
+            >
+              ＋
+            </button>
+          </div>
           <span class="spacer"></span>
           <button type="button" class="btn btn--sm btn--ghost" @click="toggleImageFullscreen">
             {{ imageFullscreen ? t('lesson.exitFullscreen') : t('lesson.fullscreen') }}
@@ -1220,7 +1298,10 @@ onBeforeUnmount(() => {
 .image-lesson__figure {
   margin: 0;
   display: grid;
-  place-items: center;
+  /* Vertically start-aligned: a long image is read by scrolling inside this box,
+     and centering would push its top out of reach. */
+  align-items: start;
+  justify-items: center;
   padding: 12px;
   border: 1px solid var(--border);
   border-radius: var(--radius);
@@ -1233,27 +1314,68 @@ onBeforeUnmount(() => {
 
 .image-lesson__img {
   display: block;
+  /* The width in the inline style is the zoom - 100 % is the card width. */
   width: 100%;
   height: auto;
   border-radius: 10px;
 }
 
-.image-lesson__figure--fullscreen {
+/* The Markdown-lesson markup leaves .toolbar to plain inline flow (no flex rule
+   exists for it), which stacked the zoom group onto its own line. Make this one
+   a row so the zoom controls, the spacer and the buttons line up. */
+.toolbar--sub {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.image-zoom {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.image-zoom__level {
+  min-width: 62px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Fullscreen covers the whole card - image *and* toolbar - so the zoom and the
+   exit button stay clickable with the real Fullscreen API as well as with the
+   CSS fallback used when the browser refuses it. */
+.image-lesson--fullscreen {
   position: fixed;
   inset: 0;
   z-index: 60;
-  padding: 24px;
-  background: rgba(5, 8, 16, 0.96);
-  max-height: 100vh;
-  height: 100vh;
+  margin: 0;
+  padding: 18px;
+  gap: 12px;
   border: none;
   border-radius: 0;
-  place-items: start center;
+  background: rgba(5, 8, 16, 0.96);
+  /* A blur across the whole viewport buys nothing here and costs frames. */
+  backdrop-filter: none;
 }
 
-.image-lesson__figure--fullscreen .image-lesson__img {
-  width: 100%;
+/* The figure takes every pixel left between the toolbar and the bottom edge. */
+.image-lesson--fullscreen .image-lesson__figure {
+  flex: 1;
+  min-height: 0;
+  max-height: none;
+}
+
+.image-lesson--fullscreen .image-lesson__img {
+  /* Only the zoom (inline style) sizes the image here too: at 100 % it is the
+     viewport width, and anything above it is panned inside the figure. */
   height: auto;
+}
+
+/* Zoomed past 100 % the image is wider than the box: align it left so the
+   overflow can be scrolled to instead of hiding behind the left edge. Written
+   after the fullscreen rules, which set the same property. */
+.image-lesson__figure--zoomed {
+  justify-items: start;
 }
 
 .lesson-view__nav {

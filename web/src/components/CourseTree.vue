@@ -1,7 +1,7 @@
 <script setup>
 import { computed, ref, watch } from 'vue'
 import TypeIcon from './TypeIcon.vue'
-import { lessonRoute, formatTime } from '../api.js'
+import { lessonRoute, lessonFileName, formatTime } from '../api.js'
 import { t } from '../i18n.js'
 
 const props = defineProps({
@@ -17,7 +17,9 @@ function matches(lesson) {
   if (!query.value) return true
   return (
     lesson.title.toLowerCase().includes(query.value) ||
-    lesson.rel_path.toLowerCase().includes(query.value)
+    lesson.rel_path.toLowerCase().includes(query.value) ||
+    // Searching for what the list shows ("intro.mp4") must work too.
+    lessonFileName(lesson).toLowerCase().includes(query.value)
   )
 }
 
@@ -79,7 +81,7 @@ const stats = computed(() => props.node.stats || { completed_lessons: 0, total_l
           :to="lessonRoute(lesson.url)"
         >
           <TypeIcon :type="lesson.lesson_type" :with-label="false" />
-          <span class="lesson__title">{{ lesson.title }}</span>
+          <span class="lesson__title">{{ lessonFileName(lesson) }}</span>
           <span v-if="lesson.progress_seconds" class="faint">{{ formatTime(lesson.progress_seconds) }}</span>
           <span class="spacer"></span>
           <span v-if="lesson.completed" class="lesson__done" :title="t('tree.completed')">✓</span>
