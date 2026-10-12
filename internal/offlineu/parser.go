@@ -142,6 +142,10 @@ func createLessonFromFile(filePath, coursePath string) *Lesson {
 		lesson.LessonType = "audio"
 		lesson.AudioFile = relative
 		lesson.AudioMime = GuessMime(filePath, "audio/mpeg")
+	case extIn(extension, imageExtensions):
+		lesson.LessonType = "image"
+		lesson.ImageFile = relative
+		lesson.ImageMime = GuessMime(filePath, "image/png")
 	case extIn(extension, textExtensions):
 		lesson.TextFiles = append(lesson.TextFiles, relative)
 		lowered := strings.ToLower(filepath.Base(filePath))
@@ -265,6 +269,9 @@ func FindLessonInTree(node *DirectoryNode, target string) *Lesson {
 }
 
 // BuildTextResources describes how every document of a lesson is rendered.
+// Modes: 'text' (plain text), 'markdown' (rendered client side),
+// 'office' (converted to HTML by /api/preview), 'image' (<img>), 'iframe'
+// (embedded PDF/HTML) or 'download' (desktop application needed).
 func BuildTextResources(lesson *Lesson) []TextResource {
 	resources := []TextResource{}
 	for _, fileName := range lesson.TextFiles {
@@ -275,6 +282,10 @@ func BuildTextResources(lesson *Lesson) []TextResource {
 			mode = "iframe" // html and pdf can be embedded by the browser
 		case extIn(extension, plainTextExtensions):
 			mode = "text" // fetched and shown as plain text
+		case extIn(extension, markdownExtensions):
+			mode = "markdown" // fetched and rendered by the frontend
+		case extIn(extension, officeExtensions):
+			mode = "office" // converted to HTML by the backend preview
 		}
 		resources = append(resources, TextResource{
 			Name: filepath.Base(fileName),

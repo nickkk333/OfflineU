@@ -138,8 +138,66 @@ func TestLessonAPIMarksDocumentsThatCannotBePreviewed(t *testing.T) {
 		Resources []TextResource `json:"resources"`
 	}{}
 	env.decode(env.lessonRequest("Section 1/05 - Handout.docx/Handout", false), &payload)
-	if len(payload.Resources) != 1 || payload.Resources[0].Mode != "download" {
+	if len(payload.Resources) != 1 || payload.Resources[0].Mode != "office" {
 		t.Errorf("handout resources = %+v", payload.Resources)
+	}
+}
+
+func TestDocumentsAreServedInlineWithARenderableMime(t *testing.T) {
+	env := newTestEnv(t)
+	env.loadCourse()
+	cases := map[string]string{
+		"Section 1/04 - Slides.pdf": "application/pdf",
+		"Section 1/03 - Quiz.html":  "text/html; charset=utf-8",
+		"Section 1/02 - Notes.txt":  "text/plain; charset=utf-8",
+	}
+	for relative, wantMime := range cases {
+		recorder := env.request(http.MethodGet, "/files/"+EscapeURLPath(relative), nil)
+		if recorder.Code != http.StatusOK {
+			t.Fatalf("%s: status = %d", relative, recorder.Code)
+		}
+		if got := recorder.Header().Get("Content-Type"); got != wantMime {
+			t.Errorf("%s: content type = %q, want %q", relative, got, wantMime)
+		}
+		if got := recorder.Header().Get("Content-Disposition"); !strings.HasPrefix(got, "inline;") {
+			t.Errorf("%s: content disposition = %q, want an inline one", relative, got)
+		}
+		if body := recorder.Body.String(); !strings.Contains(body, "%PDF") && strings.HasSuffix(relative, ".pdf") {
+			t.Errorf("%s: body was not served", relative)
+		}
+	}
+}
+
+func TestChinesePdfNameIsServedInline(t *testing.T) {
+	env := newTestEnv(t)
+	env.write("我是驴友-香港旅游攻略.pdf", []byte("%PDF-1.4 fake"))
+	env.loadCourse()
+	recorder := env.request(http.MethodGet, "/files/"+EscapeURLPath("我是驴友-香港旅游攻略.pdf"), nil)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %q", recorder.Code, recorder.Body.String())
+	}
+	if got := recorder.Header().Get("Content-Type"); got != "application/pdf" {
+		t.Errorf("content type = %q, want application/pdf", got)
+	}
+	if got := recorder.Header().Get("Content-Disposition"); !strings.HasPrefix(got, "inline;") {
+		t.Errorf("content disposition = %q, want an inline one", got)
+	}
+}
+
+func TestDocumentMimeNeverDependsOnTheOSRegistry(t *testing.T) {
+	for file, want := range map[string]string{
+		"slides.PDF":  "application/pdf",
+		"quiz.HTML":   "text/html; charset=utf-8",
+		"notes.MD":    "text/markdown; charset=utf-8",
+		"photo.PNG":   "image/png",
+		"manual.DOCX": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+	} {
+		if got := GuessMime(file, "application/octet-stream"); got != want {
+			t.Errorf("%s: mime = %q, want %q", file, got, want)
+		}
+	}
+	if got := sanitiseHeaderFilename("我是驴友-香港旅游攻略.pdf"); strings.ContainsAny(got, "我是驴友香港旅游攻略") || !strings.HasSuffix(got, ".pdf") {
+		t.Errorf("sanitised filename = %q", got)
 	}
 }
 

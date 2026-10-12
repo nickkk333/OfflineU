@@ -7,7 +7,7 @@ const props = defineProps({
   withLabel: { type: Boolean, default: true }
 })
 
-const ICONS = { video: '▶', audio: '♫', quiz: '✎', text: '▤' }
+const ICONS = { video: '▶', audio: '♫', quiz: '✎', image: '🖼', text: '▤' }
 
 const icon = computed(() => ICONS[props.type] || ICONS.text)
 const label = computed(() => t(ICONS[props.type] ? `types.${props.type}` : 'types.text'))
@@ -57,5 +57,11 @@ const label = computed(() => t(ICONS[props.type] ? `types.${props.type}` : 'type
   background: rgba(251, 191, 36, 0.16);
   border-color: rgba(251, 191, 36, 0.32);
   color: #fcd34d;
+}
+
+.type--image .type__icon {
+  background: rgba(52, 211, 153, 0.16);
+  border-color: rgba(52, 211, 153, 0.32);
+  color: #6ee7b7;
 }
 </style>

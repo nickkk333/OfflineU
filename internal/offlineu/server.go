@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"html"
 	"io"
 	"io/fs"
 	"net/http"
@@ -81,6 +82,8 @@ func (a *App) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		a.handleState(w, r)
 	case requestPath == "/api/lesson":
 		a.handleLessonAPI(w, r)
+	case requestPath == "/api/preview":
+		a.handlePreview(w, r)
 	case requestPath == "/api/progress":
 		a.handleProgress(w, r)
 	case requestPath == "/api/reset_course":
@@ -1188,6 +1191,82 @@ func (a *App) resolveCourseFile(w http.ResponseWriter, r *http.Request, prefix s
 	return full, true
 }
 
+// handlePreview converts an office document to a standalone HTML page shown
+// inside an <iframe>. The page carries no <script>: everything was escaped at
+// conversion time, so even a hostile document stays inert.
+func (a *App) handlePreview(w http.ResponseWriter, r *http.Request) {
+	if !requireMethod(w, r, http.MethodGet) {
+		return
+	}
+	course := a.Store.Get()
+	if course == nil {
+		http.Error(w, "No course loaded", http.StatusNotFound)
+		return
+	}
+	relative := strings.TrimSpace(r.URL.Query().Get("path"))
+	if relative == "" {
+		http.Error(w, "Missing path", http.StatusBadRequest)
+		return
+	}
+	full, ok := ResolveInside(course.Path, relative)
+	if !ok || !a.Config.InsideRoots(full) {
+		http.Error(w, "Access denied", http.StatusForbidden)
+		return
+	}
+	info, err := os.Stat(full)
+	if err != nil || info.IsDir() {
+		http.Error(w, "File not found", http.StatusNotFound)
+		return
+	}
+	extension := strings.ToLower(filepath.Ext(full))
+	if !extIn(extension, officeExtensions) {
+		http.Error(w, "No preview available", http.StatusBadRequest)
+		return
+	}
+	title, body, truncated, err := PreviewDocument(full)
+	if err != nil {
+		http.Error(w, "Preview failed", http.StatusInternalServerError)
+		return
+	}
+	page := previewPage(title, filepath.Base(full), body, truncated)
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("Content-Security-Policy", "default-src 'none'; img-src data:; style-src 'unsafe-inline'")
+	_, _ = io.WriteString(w, page)
+}
+
+// previewPage wraps a converted document in a minimal page. Inline CSS only,
+// no scripts: the iframe is a pure document viewer.
+func previewPage(title, filename, body string, truncated bool) string {
+	var out strings.Builder
+	out.WriteString("<!DOCTYPE html><html lang=\"zh-CN\"><head><meta charset=\"utf-8\">")
+	out.WriteString("<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">")
+	out.WriteString("<title>" + html.EscapeString(title) + "</title>")
+	out.WriteString("<style>")
+	out.WriteString("body{margin:0;padding:20px 22px;font:15px/1.75 -apple-system,\"Segoe UI\",\"PingFang SC\",\"Microsoft YaHei\",sans-serif;color:#1f2937;background:#fff}")
+	out.WriteString(".docpreview{max-width:760px;margin:0 auto}")
+	out.WriteString(".docpreview h1{font-size:1.5rem;margin:.2em 0 .6em}")
+	out.WriteString(".docpreview h2{font-size:1.3rem;margin:1em 0 .5em}")
+	out.WriteString(".docpreview h3{font-size:1.15rem;margin:1em 0 .5em}")
+	out.WriteString(".docpreview p{margin:.55em 0}")
+	out.WriteString(".docpreview blockquote{margin:.8em 0;padding:6px 14px;border-left:3px solid #cbd5e1;color:#475569;background:#f8fafc}")
+	out.WriteString(".docpreview table{border-collapse:collapse;margin:.8em 0;max-width:100%}")
+	out.WriteString(".docpreview td,.docpreview th{border:1px solid #cbd5e1;padding:6px 10px;vertical-align:top}")
+	out.WriteString(".docpreview img{max-width:100%;height:auto;display:block;margin:.6em 0}")
+	out.WriteString(".docpreview ul,.docpreview ol{margin:.5em 0 .5em 1.4em}")
+	out.WriteString(".meta{max-width:760px;margin:0 auto 14px;color:#64748b;font-size:.82rem;border-bottom:1px solid #e2e8f0;padding-bottom:10px}")
+	out.WriteString(".trunc{max-width:760px;margin:0 auto 14px;color:#92400e;background:#fef3c7;border:1px solid #fcd34d;border-radius:8px;padding:8px 12px;font-size:.85rem}")
+	out.WriteString("</style></head><body>")
+	out.WriteString(`<div class="meta">` + html.EscapeString(filename) + "</div>")
+	if truncated {
+		out.WriteString(`<div class="trunc">Only the beginning of this document is shown (preview limit 8 MiB). Open the original file for the full content.</div>`)
+	}
+	out.WriteString(body)
+	out.WriteString("</body></html>")
+	return out.String()
+}
+
 // handleFile serves any file that lives inside the active course directory.
 func (a *App) handleFile(w http.ResponseWriter, r *http.Request) {
 	full, ok := a.resolveCourseFile(w, r, "/files/")
@@ -1224,7 +1303,37 @@ func serveCourseFile(w http.ResponseWriter, r *http.Request, full, mime string) 
 		return
 	}
 	w.Header().Set("Content-Type", mime)
+	// Documents (PDF/HTML/TXT) are rendered inside an <iframe>: force inline
+	// display so the browser never turns the frame into a download prompt
+	// (which looks like a blank page), and keep sniffing off so a wrong MIME
+	// can never mask the declared one. The filename is sanitised to ASCII for
+	// the header while the URL keeps the original (percent-encoded) name.
+	w.Header().Set("Content-Disposition", "inline; filename=\""+sanitiseHeaderFilename(filepath.Base(full))+"\"")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("Accept-Ranges", "bytes")
 	http.ServeContent(w, r, filepath.Base(full), info.ModTime(), handle)
+}
+
+// sanitiseHeaderFilename turns an arbitrary (possibly CJK) file name into a
+// safe ASCII token for the Content-Disposition header: anything outside a
+// small allow-list becomes "_". Browsers only use it as a download fallback
+// name, so losing the original characters here is harmless.
+func sanitiseHeaderFilename(name string) string {
+	var out strings.Builder
+	for _, r := range name {
+		switch {
+		case r >= '0' && r <= '9', r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z',
+			r == '.', r == '-', r == '_':
+			out.WriteRune(r)
+		default:
+			out.WriteByte('_')
+		}
+	}
+	cleaned := strings.Trim(out.String(), "._")
+	if cleaned == "" {
+		return "file"
+	}
+	return cleaned
 }
 
 // mediaStatus is how the browser is told to play one lesson:

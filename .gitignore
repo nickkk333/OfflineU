@@ -8,6 +8,9 @@ node_modules/
 web/node_modules/
 web/dist/*
 !web/dist/.gitkeep
+# Vendored Vditor runtime: rewritten by "npm run vendor:vditor", which
+# "npm run build" runs first, so a fresh checkout regenerates it.
+web/public/vditor-dist/
 
 # ---- OfflineU runtime data ----
 .offlineu_progress.json

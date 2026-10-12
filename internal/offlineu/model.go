@@ -38,8 +38,17 @@ var ambiguousVideoExtensions = []string{".ts", ".m2ts", ".mts"}
 var audioExtensions = []string{".mp3", ".wav", ".m4a", ".aac", ".ogg", ".flac"}
 var subtitleExtensions = []string{".srt", ".vtt", ".ass", ".sub", ".sbv"}
 var textExtensions = []string{".txt", ".md", ".html", ".htm", ".pdf", ".docx", ".doc", ".rtf"}
-var plainTextExtensions = []string{".txt", ".md"}
+var plainTextExtensions = []string{".txt"}
+var markdownExtensions = []string{".md"}
 var inlineFrameExtensions = []string{".html", ".htm", ".pdf"}
+
+// officeExtensions are word processor documents the browser cannot render
+// itself: the server converts them to HTML and serves the preview under
+// /preview/ (pure standard library, still offline and dependency free).
+var officeExtensions = []string{".docx", ".doc", ".rtf"}
+
+// imageExtensions become first-class lessons rendered with <img>.
+var imageExtensions = []string{".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".svg", ".ico", ".avif"}
 var skipExtensions = []string{".log", ".tmp", ".bak", ".swp"}
 var quizIndicators = []string{"quiz", "exam", "test", "assessment", "exercise", "assignment", "homework"}
 
@@ -61,6 +70,28 @@ var mimeOverrides = map[string]string{
 	".wav":  "audio/wav",
 	".ogg":  "audio/ogg",
 	".flac": "audio/flac",
+	// Document types rendered inside an <iframe>: they must resolve to a
+	// renderable MIME even on minimal systems (Alpine in Docker ships no
+	// /etc/mime.types and the Windows registry may not list them either).
+	// Without this the fallback "application/octet-stream" makes the browser
+	// download the file (or leave a blank frame) instead of rendering it.
+	".pdf":  "application/pdf",
+	".html": "text/html; charset=utf-8",
+	".htm":  "text/html; charset=utf-8",
+	".txt":  "text/plain; charset=utf-8",
+	".md":   "text/markdown; charset=utf-8",
+	".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+	".doc":  "application/msword",
+	".rtf":  "application/rtf",
+	".png":  "image/png",
+	".jpg":  "image/jpeg",
+	".jpeg": "image/jpeg",
+	".gif":  "image/gif",
+	".webp": "image/webp",
+	".bmp":  "image/bmp",
+	".svg":  "image/svg+xml",
+	".ico":  "image/x-icon",
+	".avif": "image/avif",
 }
 
 func extIn(extension string, set []string) bool {
@@ -78,13 +109,15 @@ type Lesson struct {
 	Path            string // absolute path on disk
 	RelPath         string // course relative path (stable progress key)
 	URL             string // value used in /lesson/<url>
-	LessonType      string // 'video', 'audio', 'text' or 'quiz'
+	LessonType      string // 'video', 'audio', 'text', 'image' or 'quiz'
 	VideoFile       string
 	VideoMime       string
 	AudioFile       string
 	AudioMime       string
 	SubtitleFile    string
 	TextFiles       []string
+	ImageFile       string
+	ImageMime       string
 	Completed       bool
 	LastAccessed    string
 	ProgressSeconds int
@@ -95,6 +128,9 @@ func (l *Lesson) VideoSrc() string { return fileURL("/files/", l.VideoFile) }
 
 // AudioSrc is the URL the browser loads the audio from ("" when there is none).
 func (l *Lesson) AudioSrc() string { return fileURL("/files/", l.AudioFile) }
+
+// ImageSrc is the URL the browser loads the image from ("" when there is none).
+func (l *Lesson) ImageSrc() string { return fileURL("/files/", l.ImageFile) }
 
 // SubtitleSrc is the WebVTT URL of the attached subtitle track ("" when none).
 func (l *Lesson) SubtitleSrc() string { return fileURL("/subtitles/", l.SubtitleFile) }
@@ -114,6 +150,8 @@ func (l *Lesson) UnmarshalJSON(data []byte) error {
 		AudioMime       string   `json:"audio_mime"`
 		SubtitleFile    string   `json:"subtitle_file"`
 		TextFiles       []string `json:"text_files"`
+		ImageFile       string   `json:"image_file"`
+		ImageMime       string   `json:"image_mime"`
 		Completed       bool     `json:"completed"`
 		ProgressSeconds int      `json:"progress_seconds"`
 		LastAccessed    string   `json:"last_accessed"`
@@ -132,6 +170,8 @@ func (l *Lesson) UnmarshalJSON(data []byte) error {
 	l.AudioMime = raw.AudioMime
 	l.SubtitleFile = raw.SubtitleFile
 	l.TextFiles = raw.TextFiles
+	l.ImageFile = raw.ImageFile
+	l.ImageMime = raw.ImageMime
 	l.Completed = raw.Completed
 	l.ProgressSeconds = raw.ProgressSeconds
 	l.LastAccessed = raw.LastAccessed
@@ -153,6 +193,9 @@ func (l *Lesson) MarshalJSON() ([]byte, error) {
 		AudioFile       string   `json:"audio_file,omitempty"`
 		AudioMime       string   `json:"audio_mime,omitempty"`
 		AudioSrc        string   `json:"audio_src,omitempty"`
+		ImageFile       string   `json:"image_file,omitempty"`
+		ImageMime       string   `json:"image_mime,omitempty"`
+		ImageSrc        string   `json:"image_src,omitempty"`
 		SubtitleFile    string   `json:"subtitle_file,omitempty"`
 		SubtitleSrc     string   `json:"subtitle_src,omitempty"`
 		TextFiles       []string `json:"text_files"`
@@ -171,6 +214,9 @@ func (l *Lesson) MarshalJSON() ([]byte, error) {
 		AudioFile:       l.AudioFile,
 		AudioMime:       l.AudioMime,
 		AudioSrc:        l.AudioSrc(),
+		ImageFile:       l.ImageFile,
+		ImageMime:       l.ImageMime,
+		ImageSrc:        l.ImageSrc(),
 		SubtitleFile:    l.SubtitleFile,
 		SubtitleSrc:     l.SubtitleSrc(),
 		TextFiles:       append([]string{}, l.TextFiles...),

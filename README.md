@@ -17,8 +17,9 @@
 * 🎥 **视频与音频播放器** —— 内置播放器支持断点续播、观看时长统计，播完自动标记完成。
 * ▶️ **连续播放** —— 一节播完会自动接着播下一节可播放的课时（中间的文档会被跳过），
   你设置的倍速也会带到后面每一节。无需任何设置，浏览器播放和投屏都是如此。
-* 📄 **文档内联显示** —— `.txt`/`.md` 以纯文本展示，`.html`/`.pdf` 内嵌显示，
-  其他 Office 文件提供"在新标签页打开"的链接。
+* 📄 **文档内联显示** —— `.txt` 以纯文本展示，`.md` 用内置的 Vditor 渲染成带语法高亮、
+  表格和公式的页面，`.html`/`.pdf` 内嵌显示，`.docx`/`.doc`/`.rtf` 在页面内预览
+  （不需要 Word，也不会跳到新标签页）。
 * 💬 **字幕** —— 与视频同名的 `.srt`/`.vtt` 会自动挂到该视频上，并即时转换为 WebVTT，
   这样浏览器才能真正显示出来。
 * 📺 **投屏到 DLNA/UPnP 设备** —— 课时页面会列出局域网里的电视、音箱和播放器，
@@ -130,9 +131,9 @@ My Course/
 ├── Section 1 - Getting Started/
 │   ├── 01 - Welcome.mp4            → 视频课时（续播 + 连播）
 │   ├── 01 - Welcome.srt            → 作为字幕挂上去（转换为 WebVTT）
-│   ├── 02 - Notes.md               → 文本课时
+│   ├── 02 - Notes.md               → 文本课时（Markdown 渲染）
 │   ├── 03 - Quiz.html              → 测验课时（名字含 "quiz"/"exam"/"test"）
-│   └── 04 - Handout.docx           → 文档，提供"在新标签页打开"链接
+│   └── 04 - Handout.docx           → 文档，在课时页面里直接预览
 └── Section 2 - Deep Dive/
     ├── 01 - Lecture.mp3            → 音频课时
     └── resources/
@@ -143,9 +144,9 @@ My Course/
 | ---- | ------ | ---- |
 | 视频 | `.mp4` `.mkv` `.avi` `.mov` `.webm` `.m4v` `.flv` `.wmv` | 内联播放器、续播、播完标记完成 |
 | 音频 | `.mp3` `.wav` `.m4a` `.aac` `.ogg` `.flac` | 内联播放器、续播、播完标记完成 |
-| 文本 | `.txt` `.md` | 在课时页面以文本渲染 |
+| 文本 | `.txt` `.md` | `.txt` 原样显示；`.md` 由 Vditor 渲染（标题、表格、代码高亮、公式、图表） |
 | 内嵌 | `.html` `.htm` `.pdf` | 在 iframe 中渲染 |
-| 其他文档 | `.docx` `.doc` `.rtf` | 下载/打开链接 |
+| 其他文档 | `.docx` `.doc` `.rtf` | 在页面内预览：`.docx` 保留标题/表格/图片，`.doc` 读取 Word 正文，`.rtf` 保留基本格式 |
 | 字幕 | `.srt` `.vtt` `.ass` `.sub` `.sbv` | 挂到同目录同名视频上，以 VTT 提供 |
 
 ---
@@ -183,6 +184,7 @@ Vue 前端调用的正是上一版暴露的那套 JSON API，所以每个接口�
 | GET | `/api/hls/playlist.m3u8?lesson=<path>` | 分片播放的媒体播放列表 |
 | GET | `/api/hls/segment?lesson=<path>&i=3` | 该流的一个分片（MPEG-TS），首次请求时转换并缓存 |
 | GET | `/subtitles/<path>` | 以 WebVTT 提供字幕（即时转换 SRT） |
+| GET | `/api/preview?path=<doc>` | 把 `.docx`/`.doc`/`.rtf` 转成自带样式的内联 HTML 页（不包含任何脚本） |
 | GET | `/health` | `{"status": "healthy"}`（Docker 健康检查用） |
 | POST | `/api/reset_course` | 回到选择器；课程仍保留在最近列表里 |
 | POST | `/api/forget_course` | `{"path": "..."}` —— 从最近列表移除该课程并删除其进度 |
@@ -386,13 +388,18 @@ OfflineU/
 │   ├── store.go                # 当前课程 + 最近课程（offlineu_state.json）
 │   ├── subtitles.go            # SRT → WebVTT 转换（含 CP1252 回退）
 │   ├── dlna.go                 # SSDP 发现、设备描述、SOAP 投屏
+│   ├── preview.go              # 文档预览：docx/rtf 转 HTML、目录与内容上限
+│   ├── ole.go                  # OLE2 复合文档读取（FAT、目录、mini 流）
+│   ├── docbinary.go            # Word 97-2003：FIB、分片表、按分片编码取正文
 │   ├── transcode.go            # 可选的 ffmpeg：探测、重新封装/重编码、直播流
 │   ├── castsession.go          # 正在进行的投屏：位置、看门狗、自动续播下一节
 │   ├── server.go               # 路由、JSON API、静态文件与 SPA 回退
 │   └── *_test.go               # Go 测试套件
 └── web/                        # Vue 3 + Vite 前端（构建到 web/dist 并被嵌入）
-    ├── src/{api.js,store.js,router.js,i18n.js,views,components,composables,styles}
+    ├── src/{api.js,store.js,router.js,i18n.js,vditor.js,views,components,composables,styles}
     │                           # i18n.js：en/zh 词典、`t()` 助手、语言切换
+    │                           # vditor.js：Markdown → HTML（离线内置的 Vditor）
+    ├── scripts/vendor-vditor.js # 把 Vditor 运行时复制进 public/vditor-dist
     └── vite.config.js          # 开发服务器把 API 代理到 :5000
 ```
 
@@ -907,6 +914,9 @@ MIT License —— 自由使用，随意本地修改，欢迎分享。
 最初由 [@WhiskeyCoder](https://github.com/WhiskeyCoder) 用 ❤️ 以 Python/Flask 应用的形式构建；
 本版本是 Go + Vue 3 的重写，保留了同样的功能与 API。
 灵感来自那个**自由、离线、无界限地学习**的愿望。
+
+Markdown 渲染使用 [Vditor](https://github.com/Vanessa219/vditor) 4.0.0（MIT），
+它连同引擎与主题一起在构建时复制进前端，因此渲染完全离线。
 
 ---
 

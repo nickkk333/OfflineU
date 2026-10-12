@@ -249,7 +249,7 @@ func TestDocumentModes(t *testing.T) {
 		want string
 	}{
 		{"Section 1/04 - Slides.pdf", "iframe"},
-		{"Section 1/05 - Handout.docx", "download"},
+		{"Section 1/05 - Handout.docx", "office"},
 		{"Section 1/02 - Notes.txt", "text"},
 	}
 	for _, testCase := range cases {

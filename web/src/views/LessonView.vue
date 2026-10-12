@@ -6,8 +6,9 @@ import LanguageSwitch from '../components/LanguageSwitch.vue'
 import CastMenu from '../components/CastMenu.vue'
 import CastBar from '../components/CastBar.vue'
 import { api, formatTime, lessonRoute, navigateFull } from '../api.js'
+import { renderMarkdownInto } from '../vditor.js'
 import { refreshState, store } from '../store.js'
-import { t, translateServerMessage } from '../i18n.js'
+import { locale, t, translateServerMessage } from '../i18n.js'
 import { useToast } from '../composables/useToast.js'
 import { useCast } from '../composables/useCast.js'
 
@@ -42,7 +43,68 @@ const payload = ref(null)
 const lesson = ref(null)
 const resources = ref([])
 const textContents = ref({})
+// Markdown panes are rendered by Vditor straight into their element, so they
+// only need a per-URL status: the loading placeholder while the file is being
+// fetched and rendered, or the error message if that failed.
+const markdownNotice = ref({})
+// Vditor renders into the live node long after it returned, so the element is
+// kept per resource URL instead of being looked up once when the fetch lands.
+const markdownPanes = new Map()
+// URLs of the resources of the current lesson: guards late async Markdown
+// renders against a lesson switch that happened while Vditor was loading.
+const resourceUrls = new Set()
+const imageFullscreen = ref(false)
+const imageWrap = ref(null)
 const completed = ref(false)
+// Which document iframe is shown "fullscreen" (a CSS class that stretches the
+// wrapper to the viewport - the real Fullscreen API is also attempted).
+const fullscreenResource = ref('')
+const resourceWraps = new Map()
+
+function setResourceWrap(el, url) {
+  if (el) resourceWraps.set(url, el)
+  else resourceWraps.delete(url)
+}
+
+function isFullscreen(url) {
+  return fullscreenResource.value === url
+}
+
+async function toggleResourceFullscreen(url, event) {
+  if (isFullscreen(url)) {
+    exitResourceFullscreen()
+    return
+  }
+  fullscreenResource.value = url
+  await nextTick()
+  const wrap = (event && event.currentTarget && event.currentTarget.closest('.resource')?.querySelector('.resource__framewrap')) || resourceWraps.get(url)
+  if (wrap && wrap.requestFullscreen) {
+    try {
+      await wrap.requestFullscreen()
+    } catch {
+      /* CSS fallback below still stretches the document */
+    }
+  }
+}
+
+function exitResourceFullscreen() {
+  fullscreenResource.value = ''
+  if (document.fullscreenElement && document.exitFullscreen) {
+    document.exitFullscreen().catch(() => {})
+  }
+}
+
+if (typeof document !== 'undefined') {
+  document.addEventListener('fullscreenchange', () => {
+    if (!document.fullscreenElement) {
+      fullscreenResource.value = ''
+      imageFullscreen.value = false
+    }
+  })
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && fullscreenResource.value) exitResourceFullscreen()
+  })
+}
 const mediaEl = ref(null)
 const castMenu = ref(null)
 const playbackRate = ref(parseFloat(readPreference(RATE_KEY, '1')) || 1)
@@ -203,6 +265,8 @@ async function load(path) {
   loading.value = true
   error.value = ''
   textContents.value = {}
+  markdownNotice.value = {}
+  resourceUrls.clear()
   castEndedHandled = false
   // While another lesson (or another course) is being loaded, the player of
   // the previous one still fires pause/timeupdate: those must not be saved
@@ -480,14 +544,64 @@ function autoplay(media) {
 
 async function loadTextResources() {
   for (const resource of resources.value) {
-    if (resource.mode !== 'text') continue
+    if (resource.mode !== 'text' && resource.mode !== 'markdown') continue
     try {
       const response = await fetch(resource.src)
       if (!response.ok) throw new Error(`HTTP ${response.status}`)
-      textContents.value[resource.url] = await response.text()
+      const raw = await response.text()
+      if (resource.mode === 'markdown') {
+        resourceUrls.add(resource.url)
+        markdownNotice.value[resource.url] = t('lesson.loadingResource')
+        renderMarkdown(resource, raw)
+      } else textContents.value[resource.url] = raw
     } catch (cause) {
-      textContents.value[resource.url] = t('toast.couldNotLoadFile', { message: cause.message })
+      const message = t('toast.couldNotLoadFile', { message: cause.message })
+      if (resource.mode === 'markdown') markdownNotice.value[resource.url] = message
+      else textContents.value[resource.url] = message
     }
+  }
+}
+
+// The pane element is only in the DOM once the resources are rendered: the ref
+// callback hands it over, and null when the lesson (or the file) goes away.
+function setMarkdownPane(element, url) {
+  if (element) markdownPanes.set(url, element)
+  else markdownPanes.delete(url)
+}
+
+// Renders one Markdown file into its pane. Vditor loads the Lute engine and
+// the themes on first use and keeps highlighting the code blocks afterwards,
+// so the placeholder is dropped as soon as the document itself is in.
+async function renderMarkdown(resource, raw) {
+  await nextTick()
+  const pane = markdownPanes.get(resource.url)
+  if (!pane || !resourceUrls.has(resource.url)) return
+  try {
+    await renderMarkdownInto(pane, raw, { base: resource.url, locale: locale.value })
+  } catch (cause) {
+    if (!resourceUrls.has(resource.url)) return
+    markdownNotice.value[resource.url] = t('toast.couldNotLoadFile', { message: cause.message })
+    return
+  }
+  if (resourceUrls.has(resource.url)) delete markdownNotice.value[resource.url]
+}
+
+function officePreviewUrl(resource) {
+  return `/api/preview?path=${encodeURIComponent(resource.url)}`
+}
+
+async function toggleImageFullscreen() {
+  imageFullscreen.value = !imageFullscreen.value
+  await nextTick()
+  const el = imageWrap.value
+  if (imageFullscreen.value && el && el.requestFullscreen) {
+    try {
+      await el.requestFullscreen()
+    } catch {
+      /* CSS fallback still stretches the image */
+    }
+  } else if (!imageFullscreen.value && document.fullscreenElement && document.exitFullscreen) {
+    document.exitFullscreen().catch(() => {})
   }
 }
 
@@ -757,21 +871,95 @@ onBeforeUnmount(() => {
         </audio>
       </section>
 
+      <section v-else-if="lesson.image_file" class="card stack image-lesson">
+        <figure
+          class="image-lesson__figure"
+          :class="{ 'image-lesson__figure--fullscreen': imageFullscreen }"
+          ref="imageWrap"
+        >
+          <img class="image-lesson__img" :src="lesson.image_src" :alt="lesson.title" />
+        </figure>
+        <div class="toolbar toolbar--sub">
+          <a class="btn btn--sm btn--ghost" :href="lesson.image_src" target="_blank" rel="noopener">
+            {{ t('lesson.openInNewTabShort') }}
+          </a>
+          <span class="spacer"></span>
+          <button type="button" class="btn btn--sm btn--ghost" @click="toggleImageFullscreen">
+            {{ imageFullscreen ? t('lesson.exitFullscreen') : t('lesson.fullscreen') }}
+          </button>
+        </div>
+        <p class="shortcuts faint">{{ t('lesson.imageHint') }}</p>
+      </section>
+
       <section v-if="resources.length" class="card stack">
         <div class="section-title">{{ t('lesson.contentTitle') }}</div>
         <div v-for="resource in resources" :key="resource.url" class="resource">
-          <h4 class="resource__name">{{ resource.name }}</h4>
-          <iframe
+          <div class="resource__head">
+            <h4 class="resource__name">{{ resource.name }}</h4>
+            <div v-if="resource.mode === 'iframe'" class="resource__actions">
+              <button type="button" class="btn btn--sm btn--ghost" @click="toggleResourceFullscreen(resource.url, $event)">
+                {{ isFullscreen(resource.url) ? t('lesson.exitFullscreen') : t('lesson.fullscreen') }}
+              </button>
+              <a class="btn btn--sm btn--ghost" :href="resource.src" target="_blank" rel="noopener">
+                {{ t('lesson.openInNewTabShort') }}
+              </a>
+            </div>
+          </div>
+          <div
             v-if="resource.mode === 'iframe'"
-            class="resource__frame"
-            :src="resource.src"
-            :title="resource.name"
-          ></iframe>
+            class="resource__framewrap"
+            :class="{ 'resource__framewrap--fullscreen': isFullscreen(resource.url) }"
+            :ref="(el) => setResourceWrap(el, resource.url)"
+          >
+            <iframe
+              class="resource__frame"
+              :src="resource.src"
+              :title="resource.name"
+              allow="fullscreen"
+              allowfullscreen
+            ></iframe>
+            <p class="faint resource__hint">{{ t('lesson.pdfHint') }}</p>
+          </div>
           <pre v-else-if="resource.mode === 'text'" class="resource__text">{{ textContents[resource.url] ?? t('lesson.loadingResource') }}</pre>
+          <template v-else-if="resource.mode === 'markdown'">
+            <p v-if="markdownNotice[resource.url]" class="faint resource__hint">{{ markdownNotice[resource.url] }}</p>
+            <!-- Vditor takes over the children of this element, so Vue only
+                 ever patches the placeholder paragraph above it. -->
+            <div
+              class="resource__rich vditor-reset"
+              :ref="(element) => setMarkdownPane(element, resource.url)"
+            ></div>
+          </template>
+          <div
+            v-else-if="resource.mode === 'office'"
+            class="resource__framewrap"
+            :class="{ 'resource__framewrap--fullscreen': isFullscreen(resource.url) }"
+            :ref="(el) => setResourceWrap(el, resource.url)"
+          >
+            <div class="resource__head resource__head--inline">
+              <span class="faint">{{ t('lesson.officeConverted') }}</span>
+              <span class="spacer"></span>
+              <div class="resource__actions">
+                <button type="button" class="btn btn--sm btn--ghost" @click="toggleResourceFullscreen(resource.url, $event)">
+                  {{ isFullscreen(resource.url) ? t('lesson.exitFullscreen') : t('lesson.fullscreen') }}
+                </button>
+                <a class="btn btn--sm btn--ghost" :href="officePreviewUrl(resource)" target="_blank" rel="noopener">
+                  {{ t('lesson.openInNewTabShort') }}
+                </a>
+              </div>
+            </div>
+            <iframe
+              class="resource__frame"
+              :src="officePreviewUrl(resource)"
+              :title="resource.name"
+              allow="fullscreen"
+              allowfullscreen
+            ></iframe>
+          </div>
+          <figure v-else-if="resource.mode === 'image'" class="resource__image">
+            <img :src="resource.src" :alt="resource.name" loading="lazy" />
+          </figure>
           <p v-else class="faint">{{ t('lesson.cannotPreview') }}</p>
-          <a class="resource__link" :href="resource.src" target="_blank" rel="noopener">
-            {{ t('lesson.openInNewTab', { name: resource.name }) }}
-          </a>
         </div>
       </section>
 
@@ -924,17 +1112,64 @@ onBeforeUnmount(() => {
   gap: 10px;
 }
 
+.resource__head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
 .resource__name {
   font-weight: 600;
   color: var(--accent-3);
+  margin: 0;
+}
+
+.resource__actions {
+  display: flex;
+  gap: 8px;
+  margin-left: auto;
+  flex-wrap: wrap;
+}
+
+.resource__head--inline {
+  width: 100%;
+}
+
+.resource__framewrap {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
 }
 
 .resource__frame {
   width: 100%;
-  height: min(70vh, 620px);
+  height: min(78vh, 760px);
+  min-height: 420px;
   border: 1px solid var(--border);
   border-radius: var(--radius);
   background: #fff;
+}
+
+/* "Fullscreen" reading mode: the real Fullscreen API is attempted first, this
+   class keeps the document stretched to the viewport when it is unavailable
+   (or after ESC leaves native fullscreen but the class has not cleared yet). */
+.resource__framewrap--fullscreen {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  padding: 18px;
+  background: rgba(5, 8, 16, 0.96);
+}
+
+.resource__framewrap--fullscreen .resource__frame {
+  flex: 1;
+  height: auto;
+  min-height: 0;
+}
+
+.resource__hint {
+  font-size: 0.8rem;
 }
 
 .resource__text {
@@ -950,19 +1185,75 @@ onBeforeUnmount(() => {
   overflow-wrap: anywhere;
 }
 
-.resource__link {
-  align-self: flex-start;
-  padding: 9px 16px;
-  border-radius: 11px;
+/* The Markdown pane is rendered by Vditor (vditor-reset styles come from the
+   vendored dist); this block only constrains it to the card and keeps long
+   documents scrollable inside the lesson view. */
+.resource__rich {
+  max-height: 720px;
+  overflow: auto;
+  padding: 20px 22px;
+  border-radius: var(--radius);
   border: 1px solid var(--border);
-  background: var(--surface-strong);
-  font-size: 0.88rem;
-  transition: all var(--transition);
+  background: rgba(8, 12, 22, 0.6);
+  overflow-wrap: anywhere;
 }
 
-.resource__link:hover {
-  border-color: var(--border-strong);
-  background: rgba(255, 255, 255, 0.12);
+.resource__rich img {
+  max-width: 100%;
+  height: auto;
+  border-radius: 10px;
+}
+
+.resource__image {
+  margin: 0;
+}
+
+.resource__image img {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: #fff;
+}
+
+.image-lesson__figure {
+  margin: 0;
+  display: grid;
+  place-items: center;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: rgba(8, 12, 22, 0.6);
+  /* Long images stretch to the card width and are read by scrolling up and
+     down inside this box instead of being squashed into one screen. */
+  max-height: 76vh;
+  overflow: auto;
+}
+
+.image-lesson__img {
+  display: block;
+  width: 100%;
+  height: auto;
+  border-radius: 10px;
+}
+
+.image-lesson__figure--fullscreen {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  padding: 24px;
+  background: rgba(5, 8, 16, 0.96);
+  max-height: 100vh;
+  height: 100vh;
+  border: none;
+  border-radius: 0;
+  place-items: start center;
+}
+
+.image-lesson__figure--fullscreen .image-lesson__img {
+  width: 100%;
+  height: auto;
 }
 
 .lesson-view__nav {
