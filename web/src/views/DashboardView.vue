@@ -11,6 +11,9 @@ const toast = useToast()
 const filter = ref('')
 const busy = ref(false)
 const pendingExclude = ref(null)
+// Excluded list stays collapsed so a long hidden list never pushes the course
+// content down; the header toggles it open.
+const showExcluded = ref(false)
 
 const stats = computed(
   () =>
@@ -163,13 +166,21 @@ async function restoreAll() {
       </div>
       <div v-if="excluded.length" class="excluded">
         <div class="excluded__head">
-          <span class="faint">{{ t('dash.excludedTitle', { count: excluded.length }) }}</span>
+          <button
+            type="button"
+            class="excluded__toggle"
+            :aria-expanded="showExcluded"
+            @click="showExcluded = !showExcluded"
+          >
+            <span class="excluded__chevron" :class="{ 'excluded__chevron--open': showExcluded }" aria-hidden="true">▸</span>
+            <span class="faint">{{ t('dash.excludedTitle', { count: excluded.length }) }}</span>
+          </button>
           <span class="spacer"></span>
           <button type="button" class="btn btn--ghost btn--sm" :disabled="busy" @click="restoreAll">
             {{ t('dash.restoreAll') }}
           </button>
         </div>
-        <ul class="excluded__list">
+        <ul v-show="showExcluded" class="excluded__list">
           <li v-for="path in excluded" :key="path" class="excluded__item">
             <span class="mono excluded__path">{{ path }}</span>
             <span class="spacer"></span>
@@ -368,6 +379,35 @@ async function restoreAll() {
   display: flex;
   align-items: center;
   gap: 10px;
+}
+
+/* The hidden-list header doubles as the expand/collapse switch, so it looks
+   like plain text until hovered instead of like the action buttons next to it. */
+.excluded__toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 2px 4px;
+  border: none;
+  border-radius: 8px;
+  background: none;
+  cursor: pointer;
+  text-align: left;
+  transition: background var(--transition);
+}
+
+.excluded__toggle:hover {
+  background: rgba(255, 255, 255, 0.07);
+}
+
+.excluded__chevron {
+  color: var(--text-faint);
+  transition: transform var(--transition);
+}
+
+.excluded__chevron--open {
+  transform: rotate(90deg);
 }
 
 .excluded__list {
