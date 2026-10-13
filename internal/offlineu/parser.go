@@ -292,7 +292,7 @@ func BuildTextResources(lesson *Lesson) []TextResource {
 			mode = "text" // fetched and shown as plain text
 		case extIn(extension, markdownExtensions):
 			mode = "markdown" // fetched and rendered by the frontend
-		case extIn(extension, officeExtensions):
+		case extIn(extension, officeExtensions), extIn(extension, mhtmlExtensions):
 			mode = "office" // converted to HTML by the backend preview
 		}
 		resources = append(resources, TextResource{

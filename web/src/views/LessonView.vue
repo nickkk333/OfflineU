@@ -600,6 +600,14 @@ function officePreviewUrl(resource) {
   return `/api/preview?path=${encodeURIComponent(resource.url)}`
 }
 
+// MHTML archives share the converted-preview channel with office documents,
+// but the wording must not promise "Word-like" formatting: the archive is
+// unpacked, not reformatted.
+function isMhtmlResource(resource) {
+  const name = String(resource.name || resource.url || '').toLowerCase()
+  return name.endsWith('.mhtml') || name.endsWith('.mht')
+}
+
 // Keeps the zoom on a clean percentage (0.25 … 8). The steps are deliberately
 // coarse: the goal is reading a screenshot, not pixel-hunting.
 function setImageZoom(value) {
@@ -1015,7 +1023,9 @@ onBeforeUnmount(() => {
             :ref="(el) => setResourceWrap(el, resource.url)"
           >
             <div class="resource__head resource__head--inline">
-              <span class="faint">{{ t('lesson.officeConverted') }}</span>
+              <span class="faint">{{
+                isMhtmlResource(resource) ? t('lesson.mhtmlUnpacked') : t('lesson.officeConverted')
+              }}</span>
               <span class="spacer"></span>
               <div class="resource__actions">
                 <button type="button" class="btn btn--sm btn--ghost" @click="toggleResourceFullscreen(resource.url, $event)">

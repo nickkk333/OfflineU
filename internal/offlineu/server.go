@@ -1367,7 +1367,7 @@ func (a *App) handlePreview(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	extension := strings.ToLower(filepath.Ext(full))
-	if !extIn(extension, officeExtensions) {
+	if !extIn(extension, officeExtensions) && !extIn(extension, mhtmlExtensions) {
 		http.Error(w, "No preview available", http.StatusBadRequest)
 		return
 	}
@@ -1380,7 +1380,9 @@ func (a *App) handlePreview(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
-	w.Header().Set("Content-Security-Policy", "default-src 'none'; img-src data:; style-src 'unsafe-inline'")
+	// data: is allowed for images and stylesheets: that is how an unpacked
+	// MHTML archive inlines the parts it was saved with.
+	w.Header().Set("Content-Security-Policy", "default-src 'none'; img-src data:; style-src 'unsafe-inline' data:; font-src data:")
 	_, _ = io.WriteString(w, page)
 }
 
@@ -1675,11 +1677,12 @@ func (a *App) handleHLSSegment(w http.ResponseWriter, r *http.Request) {
 	serveCourseFile(w, r, segment, mpegTSMime)
 }
 
-// handleSubtitle serves subtitles. By default it converts SRT (and friends) to
-// WebVTT on the fly because browsers cannot display them otherwise. A ?raw=1
-// query returns the subtitle verbatim (still re-decoded to UTF-8): that is what
-// DLNA renderers want - the TV decodes SRT/VTT itself and would be confused by a
-// WebVTT transcription served under an .srt name.
+// handleSubtitle serves subtitles. By default it converts the file (SRT, VTT,
+// SBV, ASS/SSA or one of the .sub flavours) to WebVTT on the fly because
+// browsers only display that format in a <track>. A ?raw=1 query returns the
+// subtitle verbatim (still re-decoded to UTF-8): that is what DLNA renderers
+// want - the TV decodes SRT/VTT itself and would be confused by a WebVTT
+// transcription served under an .srt name.
 func (a *App) handleSubtitle(w http.ResponseWriter, r *http.Request) {
 	full, ok := a.resolveCourseFile(w, r, "/subtitles/")
 	if !ok {
@@ -1694,20 +1697,15 @@ func (a *App) handleSubtitle(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		body = text
-	} else if strings.EqualFold(filepath.Ext(full), ".vtt") {
-		rawBytes, err := os.ReadFile(full)
-		if err != nil {
-			http.Error(w, "File not found", http.StatusNotFound)
-			return
-		}
-		body = string(rawBytes)
 	} else {
+		// Browsers only understand WebVTT, so every supported format (SRT,
+		// VTT, SBV, ASS/SSA, both .sub flavours) is converted on the fly.
 		text, err := ReadSubtitleText(full)
 		if err != nil {
 			http.Error(w, "File not found", http.StatusNotFound)
 			return
 		}
-		body = ConvertSRTToVTT(text)
+		body = ConvertSubtitleToVTT(full, text)
 	}
 	contentType := "text/vtt; charset=utf-8"
 	if raw {

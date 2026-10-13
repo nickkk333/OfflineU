@@ -115,9 +115,9 @@ const en = {
       audioLabel: 'Audio',
       audioText: '— .mp3, .wav, .m4a, .aac, .ogg, .flac',
       docsLabel: 'Documents',
-      docsText: '— .txt, .md (rendered), .html, .pdf, .docx, .doc, .rtf (converted preview)',
+      docsText: '— .txt, .md (rendered), .html, .mhtml/.mht, .pdf, .docx, .doc, .rtf (in-page preview)',
       subsLabel: 'Subtitles',
-      subsText: '— .srt, .vtt, .ass, .sub, .sbv (converted to WebVTT on the fly)',
+      subsText: '— .srt, .vtt, .ass/.ssa, .sub, .sbv (converted to WebVTT on the fly)',
       quizLabel: 'Quizzes',
       quizText: '— any document whose name contains “quiz”, “exam” or “test”'
     },
@@ -190,6 +190,7 @@ const en = {
     cannotPreview:
       'This file type cannot be previewed in the browser. Use the link below to open it with the matching desktop application.',
     officeConverted: 'Converted preview (formatting may differ from Word)',
+    mhtmlUnpacked: 'Unpacked preview (embedded images and styles are inlined)',
     imageHint:
       'Tip: zoom with ＋ / − or Ctrl+wheel and double-click the image to go back to 100 %, or use Fullscreen / a new tab for the original size.',
     imageLesson: 'Image: {name}',
@@ -358,9 +359,9 @@ const zh = {
       audioLabel: '音频',
       audioText: '— .mp3、.wav、.m4a、.aac、.ogg、.flac',
       docsLabel: '文档',
-      docsText: '— .txt、.md（渲染显示）、.html、.pdf、.docx、.doc、.rtf（转换预览）',
+      docsText: '— .txt、.md（渲染显示）、.html、.mhtml/.mht、.pdf、.docx、.doc、.rtf（页内预览）',
       subsLabel: '字幕',
-      subsText: '— .srt、.vtt、.ass、.sub、.sbv（会即时转换为 WebVTT）',
+      subsText: '— .srt、.vtt、.ass/.ssa、.sub、.sbv（会即时转换为 WebVTT）',
       quizLabel: '测验',
       quizText: '— 文件名中包含 “quiz”、“exam” 或 “test” 的文档'
     },
@@ -432,6 +433,7 @@ const zh = {
     loadingResource: '加载中…',
     cannotPreview: '这种文件无法在浏览器中预览。请使用下面的链接，用对应的桌面应用打开它。',
     officeConverted: '转换预览（排版可能与 Word 略有差异）',
+    mhtmlUnpacked: '解包预览（内嵌图片与样式已内联）',
     imageHint: '提示：可用 ＋ / − 或 Ctrl+滚轮缩放，双击图片回到 100%；全屏或新标签页可查看原图。',
     imageLesson: '图片：{name}',
     openInNewTabShort: '↗ 新标签页',

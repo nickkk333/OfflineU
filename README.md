@@ -20,10 +20,10 @@
 * ▶️ **连续播放** —— 一节播完会自动接着播下一节可播放的课时（中间的文档会被跳过），
   你设置的倍速也会带到后面每一节。无需任何设置，浏览器播放和投屏都是如此。
 * 📄 **文档内联显示** —— `.txt` 以纯文本展示，`.md` 用内置的 Vditor 渲染成带语法高亮、
-  表格和公式的页面，`.html`/`.pdf` 内嵌显示，`.docx`/`.doc`/`.rtf` 在页面内预览
-  （不需要 Word，也不会跳到新标签页）。
-* 💬 **字幕** —— 与视频同名的 `.srt`/`.vtt` 会自动挂到该视频上，并即时转换为 WebVTT，
-  这样浏览器才能真正显示出来。
+  表格和公式的页面，`.html`/`.pdf` 内嵌显示，`.mhtml`/`.mht` 网页存档会被解包成同样式页面，
+  `.docx`/`.doc`/`.rtf` 在页面内预览（不需要 Word，也不会跳到新标签页）。
+* 💬 **字幕** —— 与视频同名的 `.srt`/`.vtt`/`.ass`/`.ssa`/`.sub`/`.sbv` 会自动挂到该视频上，
+  并即时转换为 WebVTT（ASS 解析 Dialogue 事件、SubViewer/MicroDVD 两种 .sub 均识别），这样浏览器才能真正显示出来。
 * 📺 **投屏到 DLNA/UPnP 设备** —— 课时页面会列出局域网里的电视、音箱和播放器，
   把你选中的那台设备推送当前视频或音频（并从已保存的位置续播）。纯标准库实现：
   SSDP 发现 + `SetAVTransportURI`/`Play` 这两个 SOAP 动作。
@@ -150,8 +150,9 @@ My Course/
 | 文本 | `.txt` `.md` | `.txt` 原样显示；`.md` 由 Vditor 渲染（标题、表格、代码高亮、公式、图表）；打开即标记完成 |
 | 内嵌 | `.html` `.htm` `.pdf` | 在 iframe 中渲染；打开即标记完成 |
 | 其他文档 | `.docx` `.doc` `.rtf` | 在页面内预览：`.docx` 保留标题/表格/图片，`.doc` 读取 Word 正文，`.rtf` 保留基本格式；打开即标记完成 |
+| 网页存档 | `.mhtml` `.mht` | 后端解包 multipart/related，在页面内预览：内嵌图片/样式转为 data URL，脚本被剥离；打开即标记完成 |
 | 图片 | `.png` `.jpg` `.jpeg` `.gif` `.webp` `.bmp` `.svg` `.ico` `.avif` | 图片课时；打开即标记完成 |
-| 字幕 | `.srt` `.vtt` `.ass` `.sub` `.sbv` | 挂到同目录同名视频上，以 VTT 提供 |
+| 字幕 | `.srt` `.vtt` `.ass` `.ssa` `.sub` `.sbv` | 挂到同目录同名视频上，全部即时转换为 WebVTT（SRT/VTT 直通，ASS 解析 Dialogue 事件，`.sub` 自动识别 SubViewer 或 MicroDVD，帧号按 25 fps 或文件声明的帧率换算） |
 
 ---
 
@@ -187,8 +188,8 @@ Vue 前端调用的正是上一版暴露的那套 JSON API，所以每个接口�
 | GET | `/api/media/status?path=<lesson>` | 浏览器该如何播放这一节：`{"mode":"direct"\|"hls"\|"remux"\|"raw", "ready", "preparing", "hls_url", "error", "duration"}` —— `hls=0` 表示不要提供 HLS |
 | GET | `/api/hls/playlist.m3u8?lesson=<path>` | 分片播放的媒体播放列表 |
 | GET | `/api/hls/segment?lesson=<path>&i=3` | 该流的一个分片（MPEG-TS），首次请求时转换并缓存 |
-| GET | `/subtitles/<path>` | 以 WebVTT 提供字幕（即时转换 SRT） |
-| GET | `/api/preview?path=<doc>` | 把 `.docx`/`.doc`/`.rtf` 转成自带样式的内联 HTML 页（不包含任何脚本） |
+| GET | `/subtitles/<path>` | 以 WebVTT 提供字幕（即时转换 SRT/SBV/ASS/SSA/SubViewer/MicroDVD） |
+| GET | `/api/preview?path=<doc>` | 把 `.docx`/`.doc`/`.rtf` 转成自带样式的内联 HTML 页（不包含任何脚本），并把 `.mhtml`/`.mht` 网页存档解包成同样的页面 |
 | GET | `/health` | `{"status": "healthy"}`（Docker 健康检查用） |
 | POST | `/api/reset_course` | 回到选择器；课程仍保留在最近列表里 |
 | POST | `/api/exclude` | `{"path": "<课程相对路径>"}` —— 从课程内容隐藏一个文件课时或整个文件夹（磁盘文件不动） |

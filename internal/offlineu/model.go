@@ -36,8 +36,8 @@ const tsSyncByte = 0x47
 // - so the parser checks the content before it believes the name.
 var ambiguousVideoExtensions = []string{".ts", ".m2ts", ".mts"}
 var audioExtensions = []string{".mp3", ".wav", ".m4a", ".aac", ".ogg", ".flac"}
-var subtitleExtensions = []string{".srt", ".vtt", ".ass", ".sub", ".sbv"}
-var textExtensions = []string{".txt", ".md", ".html", ".htm", ".pdf", ".docx", ".doc", ".rtf"}
+var subtitleExtensions = []string{".srt", ".vtt", ".ass", ".ssa", ".sub", ".sbv"}
+var textExtensions = []string{".txt", ".md", ".html", ".htm", ".mhtml", ".mht", ".pdf", ".docx", ".doc", ".rtf"}
 var plainTextExtensions = []string{".txt"}
 var markdownExtensions = []string{".md"}
 var inlineFrameExtensions = []string{".html", ".htm", ".pdf"}
@@ -46,6 +46,13 @@ var inlineFrameExtensions = []string{".html", ".htm", ".pdf"}
 // itself: the server converts them to HTML and serves the preview under
 // /preview/ (pure standard library, still offline and dependency free).
 var officeExtensions = []string{".docx", ".doc", ".rtf"}
+
+// mhtmlExtensions are single-file web archives (MHTML): one HTML page plus
+// every image and stylesheet it references, packed as a multipart/related
+// message. Browsers open such files inconsistently (Chrome shows them, Firefox
+// and Safari do not), so the preview unpacks them server side like office
+// documents - see mhtml.go.
+var mhtmlExtensions = []string{".mhtml", ".mht"}
 
 // imageExtensions become first-class lessons rendered with <img>.
 var imageExtensions = []string{".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".svg", ".ico", ".avif"}
@@ -78,20 +85,24 @@ var mimeOverrides = map[string]string{
 	".pdf":  "application/pdf",
 	".html": "text/html; charset=utf-8",
 	".htm":  "text/html; charset=utf-8",
-	".txt":  "text/plain; charset=utf-8",
-	".md":   "text/markdown; charset=utf-8",
-	".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-	".doc":  "application/msword",
-	".rtf":  "application/rtf",
-	".png":  "image/png",
-	".jpg":  "image/jpeg",
-	".jpeg": "image/jpeg",
-	".gif":  "image/gif",
-	".webp": "image/webp",
-	".bmp":  "image/bmp",
-	".svg":  "image/svg+xml",
-	".ico":  "image/x-icon",
-	".avif": "image/avif",
+	// MHTML is served as multipart so a direct /files/ link behaves like the
+	// original archive; the inline preview unpacks it to HTML instead.
+	".mhtml": "multipart/related",
+	".mht":   "multipart/related",
+	".txt":   "text/plain; charset=utf-8",
+	".md":    "text/markdown; charset=utf-8",
+	".docx":  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+	".doc":   "application/msword",
+	".rtf":   "application/rtf",
+	".png":   "image/png",
+	".jpg":   "image/jpeg",
+	".jpeg":  "image/jpeg",
+	".gif":   "image/gif",
+	".webp":  "image/webp",
+	".bmp":   "image/bmp",
+	".svg":   "image/svg+xml",
+	".ico":   "image/x-icon",
+	".avif":  "image/avif",
 }
 
 func extIn(extension string, set []string) bool {

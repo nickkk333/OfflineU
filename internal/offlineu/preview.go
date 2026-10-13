@@ -58,6 +58,9 @@ func PreviewDocument(path string) (title, body string, truncated bool, err error
 		return base, docToHTML(data), truncated, nil
 	case ".rtf":
 		return base, rtfToHTML(data), truncated, nil
+	case ".mhtml", ".mht":
+		body, convErr := mhtmlToHTML(data)
+		return base, body, truncated, convErr
 	default:
 		return "", "", false, fmt.Errorf("no preview available for %s", filepath.Ext(path))
 	}
