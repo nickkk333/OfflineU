@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // stubTranscoder pretends ffmpeg is installed without needing one: probing
@@ -316,6 +317,44 @@ func TestProbeFallsBackToFFmpegWithoutFFprobe(t *testing.T) {
 	transcoder := &Transcoder{ffmpeg: "definitely-not-ffmpeg"}
 	if info, err := transcoder.Probe(context.Background(), "lesson.mkv"); err == nil {
 		t.Errorf("a missing ffmpeg should fail, got %+v", info)
+	}
+}
+
+// A probe that ran out of budget says nothing about the file - caching it would
+// leave that lesson without a length (and a cast unable to see its end) until
+// the file changes on disk. Deadlines are therefore never remembered; real
+// file failures still are.
+func TestProbeCachesFileFailuresButNotDeadlines(t *testing.T) {
+	transcoder := &Transcoder{ffmpeg: "ffmpeg"}
+	dir := t.TempDir()
+	file := filepath.Join(dir, "lesson.mp4")
+	if err := os.WriteFile(file, []byte("not really a video"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	stat, err := os.Stat(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cache := transcoder.probes()
+	key := filepath.Clean(file)
+
+	// An expired budget: the failure is the caller's, not the file's.
+	ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+	defer cancel()
+	if _, err := transcoder.Inspect(ctx, file); err == nil {
+		t.Fatal("probing with an expired deadline must fail")
+	}
+	if _, _, ok := cache.get(key, stat.Size(), stat.ModTime()); ok {
+		t.Error("a deadline must not be cached - the next caller could not retry")
+	}
+
+	// The same file probed without a deadline: ffmpeg rejects it, and that
+	// verdict is worth remembering.
+	if _, err := transcoder.Inspect(context.Background(), file); err == nil {
+		t.Fatal("a file that is not a video must fail to probe")
+	}
+	if _, _, ok := cache.get(key, stat.Size(), stat.ModTime()); !ok {
+		t.Error("a genuine file failure should be cached")
 	}
 }
 

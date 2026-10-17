@@ -322,8 +322,21 @@ func (t *Transcoder) Inspect(ctx context.Context, file string) (fileFacts, error
 	if err != nil && !t.Available() {
 		return facts, err
 	}
+	// A probe that ran out of time says nothing about the file - only about
+	// the disk being busy right now. Remembering it would leave this lesson
+	// without a length (and a cast that can never see it end) until the file
+	// changes, so a deadline is never cached: the next caller probes again.
+	if err != nil && isTimeoutError(ctx, err) {
+		return facts, err
+	}
 	cache.put(key, stat.Size(), stat.ModTime(), facts, err)
 	return facts, err
+}
+
+// isTimeoutError reports whether a probe failed because its budget ran out
+// instead of because of the file itself.
+func isTimeoutError(ctx context.Context, err error) bool {
+	return ctx.Err() != nil || errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled)
 }
 
 // inspect runs the probe itself: ffprobe first, "ffmpeg -i" when there is none.

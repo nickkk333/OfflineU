@@ -30,6 +30,19 @@ const (
 	castEndTolerance   = 2.0              // seconds before the end that count as "finished"
 	castPositionFresh  = 12 * time.Second // a reported position older than this is stale
 	castPositionMaxAge = 6 * time.Hour    // a cast nobody stopped is dropped eventually
+	// Right after a hand-over the device may still describe the lesson it was
+	// told to leave; a stop it reports inside this window is not this lesson's.
+	castHandoverGrace = 5 * time.Second
+	// The watchdog's ffprobe budget for the next lesson. No browser is waiting
+	// on it, and without a length the cast can never see the lesson end - so a
+	// cold disk gets considerably more time than a request path would.
+	castProbeTimeout = 20 * time.Second
+	// A position that jumps back to the beginning counts as the device having
+	// replayed the lesson (its end, whether or not the length is known): it
+	// takes this many played seconds before such a jump means anything, and
+	// the beginning is anything within this many seconds of zero.
+	castLoopRestartMin = 30.0
+	castLoopRestartMax = 10.0
 )
 
 // CastSession is one lesson playing on one renderer.
@@ -58,6 +71,15 @@ type CastSession struct {
 	LastAsked    time.Time // last GetPositionInfo call
 	stopped      bool
 	watching     bool // a watchdog goroutine is looking after this session
+
+	// DeviceLooped marks that the renderer started the current media over by
+	// itself: the lesson therefore ended, whether or not its length is known.
+	DeviceLooped bool
+	// sawPlaying is set once the device confirmed this lesson with a PLAYING
+	// report. A device that never started (it refused the media, say) must not
+	// be able to end it by sitting in STOPPED - the cast would walk through
+	// the whole course marking lessons completed that never played.
+	sawPlaying bool
 }
 
 // elapsed is how long the device has been playing this lesson.
@@ -102,17 +124,64 @@ func (s *CastSession) position(now time.Time) (float64, bool) {
 	return s.estimate(now), false
 }
 
-// finished reports whether the lesson has run to its end.
+// finished reports whether the lesson has run to its end. The position only
+// tells that when the length is known - the other two signals cover the rest:
+// a device that stopped is done, and a device that started the media over has
+// seen the lesson end too (it just does not say so). Without them a lesson of
+// unknown length would loop on the device forever, because nothing could ever
+// hand the next one over.
 func (s *CastSession) finished(now time.Time) bool {
-	if s.State == CastStateEnded || s.Duration <= 0 {
+	if s.State == CastStateEnded {
+		return false
+	}
+	if s.DeviceLooped {
+		return true
+	}
+	if s.deviceStopped(now) {
+		return true
+	}
+	if s.Duration <= 0 {
 		return false
 	}
 	position, _ := s.position(now)
-	if position >= s.Duration-castEndTolerance {
-		return true
+	return position >= s.Duration-castEndTolerance
+}
+
+// deviceStopped reports whether the device itself said STOPPED recently. A stop
+// right after the hand-over still belongs to the lesson the device was just
+// told to leave, so the first seconds of a new lesson are excluded - and a
+// device that never confirmed PLAYING for this lesson cannot end it by sitting
+// still, otherwise a refused file would march the cast through the course.
+func (s *CastSession) deviceStopped(now time.Time) bool {
+	if s.RealState != "STOPPED" || s.RealAt.IsZero() || now.Sub(s.RealAt) >= castPositionFresh {
+		return false
 	}
-	// A device that stopped (someone pressed stop on the remote) is done too.
-	return s.RealState == "STOPPED" && !s.RealAt.IsZero() && now.Sub(s.RealAt) < castPositionFresh
+	if !s.sawPlaying {
+		return false
+	}
+	return now.Sub(s.StartedAt) > castHandoverGrace
+}
+
+// deviceLooped reports whether the newest position tells of a restart: the
+// device played well into a lesson whose length is unknown and is now back at
+// the beginning - it ran the media to its end and started it over instead of
+// stopping. Only a restart while playing counts, and only against a fresh
+// previous report; a rewind done through the cast bar goes through setPosition,
+// which clears the position this compares against.
+func (s *CastSession) deviceLooped(info PositionInfo, now time.Time) bool {
+	if s.Duration > 0 {
+		return false // the position check sees the end without help
+	}
+	if s.RealAt.IsZero() || now.Sub(s.RealAt) >= castPositionFresh {
+		return false // nothing fresh to compare against
+	}
+	if s.RealState != "PLAYING" || info.TransportState != "PLAYING" {
+		return false // only a restart while playing counts
+	}
+	if s.RealPosition < castLoopRestartMin {
+		return false // it never got far enough for this to mean a restart
+	}
+	return info.RelTime <= castLoopRestartMax && info.RelTime < s.RealPosition
 }
 
 // pause freezes the clock until resume is called.
@@ -142,6 +211,8 @@ func (s *CastSession) setPosition(position float64, now time.Time, paused bool) 
 	s.RealState = ""
 	s.LastSaved = position
 	s.State = CastStatePlaying
+	s.DeviceLooped = false
+	s.sawPlaying = false
 	if paused {
 		s.PausedAt = now
 	}
@@ -164,6 +235,8 @@ func (s *CastSession) reset(lesson *Lesson, file string, duration float64, conve
 	s.RealState = ""
 	s.LastSaved = 0
 	s.State = CastStatePlaying
+	s.DeviceLooped = false
+	s.sawPlaying = false
 }
 
 // CastSessionView is the JSON the browser polls: enough to draw a progress bar
@@ -319,9 +392,18 @@ func (a *App) castTick(session *CastSession) bool {
 			session.LastAsked = now
 			if info, err := a.DLNA.Position(renderer); err == nil {
 				if info.RelTime > 0 || info.TrackDuration > 0 {
+					// A device that plays a lesson of unknown length to its
+					// end and simply starts it over never says STOPPED - the
+					// jump back to the beginning is the only trace it leaves.
+					if session.deviceLooped(info, now) {
+						session.DeviceLooped = true
+					}
 					session.RealPosition = info.RelTime
 					session.RealAt = now
 					session.RealState = info.TransportState
+					if info.TransportState == "PLAYING" {
+						session.sawPlaying = true
+					}
 					if session.Duration <= 0 && info.TrackDuration > 0 {
 						session.Duration = info.TrackDuration
 					}
@@ -470,6 +552,24 @@ func (a *App) castNext(session *CastSession) error {
 	if !ok {
 		return errors.New("the cast device was not found on the network")
 	}
+	// Work out the length of the next lesson before it is handed over. This
+	// runs on the watchdog's own clock, so it gets a considerably bigger budget
+	// than a browser request would: on a cold disk ffprobe needs a while, and
+	// without a length the cast can never tell when this lesson ended. The
+	// answer is remembered (see Transcoder.Inspect), so the conversion
+	// decision below reads the same facts without probing the file twice.
+	file := a.mediaFileFor(course, next)
+	duration := 0.0
+	if file != "" {
+		ctx, cancel := watchdogProbeContext()
+		info, err := a.Transcoder.Probe(ctx, file)
+		cancel()
+		if err == nil {
+			duration = info.Duration
+		} else {
+			logf("dlna: no length for %q (%v) - the device has to say when it ended", next.Title, err)
+		}
+	}
 	target, hasMedia, err := a.castTarget(session.BaseURL, course, next, "auto", 0)
 	if err != nil {
 		return err
@@ -486,13 +586,6 @@ func (a *App) castNext(session *CastSession) error {
 	if _, err := a.Progress.Update(course, session.LessonPath, &finished, &seconds); err != nil {
 		logf("dlna: cannot mark %q as completed: %v", session.LessonTitle, err)
 	}
-	file := a.mediaFileFor(course, next)
-	duration := 0.0
-	ctx, cancel := probeContext()
-	if info, err := a.Transcoder.Probe(ctx, file); err == nil {
-		duration = info.Duration
-	}
-	cancel()
 	if err := a.DLNA.Cast(renderer, target.Item, 0); err != nil {
 		return err
 	}
@@ -526,6 +619,15 @@ func (a *App) stopCastDevice(session *CastSession) {
 // request (the watchdog runs on its own clock).
 func probeContext() (context.Context, context.CancelFunc) {
 	return context.WithTimeout(context.Background(), 5*time.Second)
+}
+
+// watchdogProbeContext is the deadline for the ffprobe call that works out how
+// long the next lesson plays. The watchdog hands the lesson over while the
+// device idles, so nobody waits on this answer - but the cast cannot see the
+// lesson end without it, which is why a cold disk deserves more than the
+// request sized probeContext.
+func watchdogProbeContext() (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.Background(), castProbeTimeout)
 }
 
 // nextPlayableLesson is the lesson that follows path: the next one with media,

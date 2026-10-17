@@ -91,6 +91,124 @@ func TestFinishedAtTheEndOfTheMedia(t *testing.T) {
 	}
 }
 
+// A lesson of unknown length still ends when the device says it stopped - the
+// length is only one of the three signals the watchdog trusts.
+func TestFinishedWhenTheDeviceStopsWithoutADuration(t *testing.T) {
+	now := time.Now()
+	session := &CastSession{
+		Duration:     0,
+		StartedAt:    now.Add(-time.Minute),
+		State:        CastStatePlaying,
+		RealState:    "STOPPED",
+		RealAt:       now,
+		sawPlaying:   true,
+		DeviceLooped: false,
+	}
+	if !session.finished(now) {
+		t.Error("a device that stopped has finished the lesson, duration or not")
+	}
+}
+
+// A stop right after the hand-over (or from a device that never confirmed
+// PLAYING for this lesson) must not end it - otherwise the watchdog would
+// march through the course, marking unplayed lessons completed.
+func TestDeviceStopIsIgnoredDuringHandoverAndWithoutPlaying(t *testing.T) {
+	now := time.Now()
+	fresh := &CastSession{
+		Duration:   0,
+		StartedAt:  now, // just handed over
+		State:      CastStatePlaying,
+		RealState:  "STOPPED",
+		RealAt:     now,
+		sawPlaying: true,
+	}
+	if fresh.finished(now) {
+		t.Error("the stop still belongs to the lesson the device was leaving")
+	}
+
+	neverPlayed := &CastSession{
+		Duration:   0,
+		StartedAt:  now.Add(-time.Minute),
+		State:      CastStatePlaying,
+		RealState:  "STOPPED",
+		RealAt:     now,
+		sawPlaying: false,
+	}
+	if neverPlayed.finished(now) {
+		t.Error("a device that never played cannot end the lesson by sitting still")
+	}
+}
+
+// A renderer that loops an unknown-length lesson never says STOPPED: the
+// position jumping back to the beginning is the only trace of the end.
+func TestFinishedWhenTheDeviceRestartsTheLesson(t *testing.T) {
+	now := time.Now()
+	session := &CastSession{
+		Duration:     0, // nobody could read a length off this file
+		StartedAt:    now.Add(-2 * time.Minute),
+		State:        CastStatePlaying,
+		RealState:    "PLAYING",
+		RealPosition: 300, // was deep inside the lesson...
+		RealAt:       now.Add(-3 * time.Second),
+	}
+	restart := PositionInfo{RelTime: 3, TransportState: "PLAYING"} // ...then started over
+	if !session.deviceLooped(restart, now) {
+		t.Fatal("a jump back to the start of an unknown-length lesson is a restart")
+	}
+	session.DeviceLooped = session.deviceLooped(restart, now)
+	if !session.finished(now) {
+		t.Error("a restarted lesson has ended as far as the cast is concerned")
+	}
+
+	// With a known length the position check already sees the end; a rewind
+	// through the cast bar (which resets the position) must not count either.
+	known := *session
+	known.Duration = 600
+	known.DeviceLooped = false
+	if known.deviceLooped(restart, now) {
+		t.Error("a lesson with a known length is judged by its position, not by a jump")
+	}
+	rewound := *session
+	rewound.RealPosition = 0 // setPosition cleared the bookkeeping
+	if rewound.deviceLooped(restart, now) {
+		t.Error("a rewind through the cast bar is not a device restart")
+	}
+}
+
+// Short pauses in the device's position (buffering, a small seek) are not
+// restarts: the jump has to cross the whole lower band.
+func TestSmallPositionJumpsAreNotRestarts(t *testing.T) {
+	now := time.Now()
+	session := &CastSession{
+		Duration:     0,
+		StartedAt:    now.Add(-2 * time.Minute),
+		State:        CastStatePlaying,
+		RealState:    "PLAYING",
+		RealPosition: 40,
+		RealAt:       now.Add(-2 * time.Second),
+	}
+	// Not far enough into the lesson to make a jump meaningful.
+	shallow := *session
+	shallow.RealPosition = 15
+	if shallow.deviceLooped(PositionInfo{RelTime: 2, TransportState: "PLAYING"}, now) {
+		t.Error("a lesson barely started did not restart")
+	}
+	// Still inside the band of the beginning.
+	if session.deviceLooped(PositionInfo{RelTime: 30, TransportState: "PLAYING"}, now) {
+		t.Error("position 30 is not the beginning of the lesson")
+	}
+	// Not playing on either side means nothing.
+	if session.deviceLooped(PositionInfo{RelTime: 2, TransportState: "PAUSED_PLAYBACK"}, now) {
+		t.Error("only a restart while playing counts")
+	}
+	// The previous report went stale - no fresh baseline to compare against.
+	stale := *session
+	stale.RealAt = now.Add(-time.Minute)
+	if stale.deviceLooped(PositionInfo{RelTime: 2, TransportState: "PLAYING"}, now) {
+		t.Error("a stale report cannot show a restart")
+	}
+}
+
 func TestPauseFreezesTheClock(t *testing.T) {
 	base := time.Now()
 	session := &CastSession{Duration: 600, StartedAt: base, State: CastStatePlaying}
