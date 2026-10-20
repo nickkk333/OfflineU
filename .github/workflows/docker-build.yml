@@ -6,6 +6,9 @@ on:
     tags: [ 'v*' ]
   pull_request:
     branches: [ main, master ]
+  # 手动补跑某个 tag（例如在加上 fpk 打包之前就打好 tag 的版本）：
+  # 选择 tag 作为运行目标即可，release 步骤会把包补挂到这个 Release 上
+  workflow_dispatch:
 
 env:
   REGISTRY: ghcr.io
@@ -159,18 +162,55 @@ jobs:
         path: offlineu-amd64-${{ needs.version.outputs.version }}.tar
         retention-days: 14
 
-  # ---- Release: attach the 64-bit image file when a v* tag is pushed ----
+  # ---- 飞牛 fnOS 的 .fpk 外壳 ----
+  # 包内只有 manifest / 生命周期脚本 / 安装向导 / compose，应用本体是 ghcr 上刚推送的
+  # 那个 tag，所以目标机需要能拉取镜像（离线时先导入 image tar，或改 FNOS_IMAGE）。
+  #   v2.1.17 -> offlineu_2.1.17_x86.fpk   (artifact + GitHub release asset)
+  # 要出 ARM 包时，把下面的平台改成矩阵：[x86, arm]
+  fnos-fpk:
+    name: Build fnOS .fpk (x86)
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: [version]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Build the fpk
+      env:
+        V: ${{ needs.version.outputs.version }}
+        IMAGE: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+      run: |
+        set -e
+        # 镜像引用必须全小写，否则 compose 起容器时会报 "invalid reference format"
+        IMAGE="$(echo "$IMAGE" | tr '[:upper:]' '[:lower:]')"
+        bash packaging/fnos-app/build-fpk.sh "$V" x86 "$IMAGE:$V"
+        tar -xzOf "image-dist/offlineu_${V}_x86.fpk" manifest
+
+    - name: Upload fpk artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: offlineu-${{ needs.version.outputs.version }}-fnos-fpk
+        path: image-dist/*.fpk
+        retention-days: 14
+
+  # ---- Release: attach the image file and the fnOS package when a v* tag is pushed ----
   release:
     name: Publish GitHub release
     if: startsWith(github.ref, 'refs/tags/')
-    needs: [docker, image-tar]
+    needs: [docker, image-tar, fnos-fpk]
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
     - name: Compute version (without the leading v)
       id: ver
-      run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+      run: |
+        echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+        # ghcr 的镜像名必须小写，而 github.repository 会保留大小写（nickkk333/OfflineU）
+        echo "image=$(echo "${GITHUB_REPOSITORY}" | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_OUTPUT"
 
     - name: Download all artifacts
       uses: actions/download-artifact@v4
@@ -191,17 +231,18 @@ jobs:
         body: |
           ## OfflineU ${{ github.ref_name }}
 
-          分发方式只有 **Docker**（64 位 `linux/amd64` 镜像文件 + 多架构镜像仓库）。
+          应用本体只走 **Docker**（多架构镜像仓库 + 64 位 `linux/amd64` 镜像文件）；
+          飞牛 fnOS 另有一个 `.fpk` 安装外壳，里面跑的也是同一个镜像。
 
           ### Docker（多架构 amd64 / arm64）
           ```bash
-          docker pull ghcr.io/${{ github.repository }}:${{ steps.ver.outputs.version }}
+          docker pull ghcr.io/${{ steps.ver.outputs.image }}:${{ steps.ver.outputs.version }}
           docker run -d --name offlineu -p 5000:5000 \
             -v "/path/to/your/courses:/courses:ro" \
             -v offlineu-data:/app/data \
-            ghcr.io/${{ github.repository }}:${{ steps.ver.outputs.version }}
+            ghcr.io/${{ steps.ver.outputs.image }}:${{ steps.ver.outputs.version }}
           ```
-          > 想一直跟最新版用 `ghcr.io/${{ github.repository }}:latest` —— 每次推送 main/master 都会自动重建并更新该 tag；本 Release 对应的镜像固定为 `:${{ steps.ver.outputs.version }}`。
+          > 想一直跟最新版用 `ghcr.io/${{ steps.ver.outputs.image }}:latest` —— 每次推送 main/master 都会自动重建并更新该 tag；本 Release 对应的镜像固定为 `:${{ steps.ver.outputs.version }}`。
 
           ### 64 位镜像文件（离线 `docker load`，无需镜像仓库）
           `offlineu-amd64-${{ steps.ver.outputs.version }}.tar`（linux/amd64）：
@@ -213,9 +254,18 @@ jobs:
             offlineu:${{ steps.ver.outputs.version }}
           ```
 
+          ### 飞牛 fnOS 应用包（.fpk）
+          `offlineu_${{ steps.ver.outputs.version }}_x86.fpk` —— 在「应用中心 → 手动安装」里直接装。
+          安装向导只问课程目录（只读挂载到 `/courses`），进度与转码缓存落在安装卷的
+          `@appshare/offlineu`；装好后到「应用设置 → 授权目录」把该目录授权给本应用。
+          容器使用 host 网络，直接占用宿主机 5000 端口（投屏依赖组播）。
+          > 包里不含镜像，NAS 需要能拉取 `ghcr.io/${{ steps.ver.outputs.image }}:${{ steps.ver.outputs.version }}`；
+          > 离线环境请先导入下面的镜像文件，或重新用 `FNOS_IMAGE` 指向本地仓库打包。
+
           | 文件 | 说明 |
           | --- | --- |
           | `offlineu-amd64-${{ steps.ver.outputs.version }}.tar` | Docker 镜像文件（linux/amd64，`docker load -i` 用） |
+          | `offlineu_${{ steps.ver.outputs.version }}_x86.fpk` | 飞牛 fnOS 安装包（x86，手动安装） |
           | `checksums.txt` | SHA-256 校验和 |
 
           版本号跟随 git tag（`${{ github.ref_name }}` → `${{ steps.ver.outputs.version }}`），镜像 tag、`--build-arg VERSION` 与文件名同步。
