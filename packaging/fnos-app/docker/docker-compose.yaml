@@ -1,0 +1,36 @@
+# OfflineU 的容器定义。fnOS 的 docker-project 机制会在应用启动时直接执行本文件，
+# 所以容器名必须与 cmd/main 里检查的一致。
+#
+# 镜像引用在打包时由 packaging/fnos-app/build-fpk.sh 替换；
+# 三个挂载点的真实路径由 fnOS 在**创建容器时**替换 ${...} 得到：
+#   ${wizard_courses_dir}      安装向导里填写的课程目录
+#   ${TRIM_DATA_SHARE_PATHS}   config/resource 里声明的 data-share（<安装卷>/@appshare/offlineu）
+#   ${TRIM_APPDEST_VOL}        应用安装所在的存储卷，仅作为上面两个变量的兜底
+# 注意：不要改成安装钩子里 sed 模板占位符 —— app.tgz 的解包在创建容器之前完成，
+# 会把钩子对 compose 的修改覆盖掉（这回就是这样炸的）。
+services:
+  offlineu:
+    image: @IMAGE@
+    container_name: offlineu
+    # 投屏（DLNA/SSDP 组播）要求容器与宿主在同一网络里，否则电视永远发现不了，
+    # 因此固定 host 网络：容器直接占用宿主机端口，不再做端口映射（ports 与 host 互斥）。
+    network_mode: host
+    volumes:
+      # 课程目录：安装向导里填的那个宿主机绝对路径，只读挂载到容器的 /courses，
+      # 这样课程文件夹不会被 OfflineU 写入（进度与缓存都在下面两个目录里）。
+      - "${wizard_courses_dir:-${TRIM_APPDEST_VOL}/@appshare/offlineu/courses}:/courses:ro"
+      # 进度/课程台账与转码缓存：安装卷的 @appshare/offlineu/{data,cache}
+      - "${TRIM_DATA_SHARE_PATHS:-${TRIM_APPDEST_VOL}/@appshare/offlineu}/data:/app/data"
+      - "${TRIM_DATA_SHARE_PATHS:-${TRIM_APPDEST_VOL}/@appshare/offlineu}/cache:/app/cache"
+    environment:
+      - TZ=Asia/Shanghai
+      # 与镜像默认值一致，写出来是为了让挂载点一目了然
+      - OFFLINEU_ROOTS=/courses
+      - OFFLINEU_PROGRESS_DIR=/app/data
+      - OFFLINEU_CACHE_DIR=/app/cache
+      - OFFLINEU_HOST=0.0.0.0
+      # host 网络下容器直接监听宿主机端口，必须与 manifest 的 service_port / ui/config 一致
+      - OFFLINEU_PORT=${TRIM_SERVICE_PORT:-5000}
+      # 转码缓存按最旧文件优先清理的上限（GiB），避免把安装卷塞满
+      - OFFLINEU_CACHE_LIMIT_GB=20
+    restart: unless-stopped

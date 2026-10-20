@@ -1,0 +1,27 @@
+[
+    {
+        "stepTitle": "卸载应用",
+        "items": [
+            {
+                "type": "tips",
+                "helpText": "保留或删除本应用的设置与数据（<code>@appdata/offlineu</code>）。<br>课程目录与 <code>@appshare/offlineu</code> 里的文件不会被删除，需要时请自行清理。"
+            },
+            {
+                "type": "radio",
+                "field": "wizard_delete_data",
+                "label": "仅卸载，保留现有文件以备将来重新安装。",
+                "initValue": "false",
+                "options": [
+                    {
+                        "label": "保留现有文件",
+                        "value": "false"
+                    },
+                    {
+                        "label": "清除所有套件数据文件（不可恢复）！！！",
+                        "value": "true"
+                    }
+                ]
+            }
+        ]
+    }
+]

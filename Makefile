@@ -5,7 +5,8 @@
 #   make image     Docker 镜像 offlineu:local 与 offlineu:<版本>
 #   make image-save 镜像导出 image-dist/offlineu-amd64-<版本>.tar（64 位）
 #
-# 分发方式只有 Docker：Windows exe 与飞牛OS / fnOS 的 fpk 适配都已移除。
+# 分发方式只有 Docker：Windows exe 已移除；飞牛OS / fnOS 的 .fpk 只是一个外壳
+# （packaging/fnos-app，make fnos-fpk），装进去跑的仍然是这里的 Docker 镜像。
 # CI（.github/workflows/docker-build.yml）与这里同一条规则：
 #   推送 main/master -> ghcr.io/<repo>:latest + offlineu-amd64-latest.tar
 #   打 v* tag        -> ghcr.io/<repo>:X.Y.Z   + offlineu-amd64-X.Y.Z.tar（挂 Release）
@@ -40,7 +41,17 @@ Q     := "
 BLANK := echo ""
 endif
 
-.PHONY: help all web image image-save check vet test fmt clean
+# 飞牛OS / fnOS 的 .fpk 外壳：镜像引用写进 compose，安装向导里选课程目录。
+#
+# manifest 的 version 必须是 x[.y[.z]][-build] 这种数字版本：`latest`（未打 tag）
+# 会被飞牛判成「应用包不符合系统要求」，所以这里留空，由 build-fpk.sh 换成 0.0.<日期>。
+# FNOS_PLATFORM 必须与 NAS 架构一致：x86（Intel/AMD）或 arm（RK3588 等）。
+FNOS_VERSION   ?= $(if $(filter latest,$(VERSION)),,$(VERSION))
+FNOS_PLATFORM  ?= x86
+FNOS_IMAGE     ?= ghcr.io/nickkk333/offlineu
+FNOS_IMAGE_TAG ?= latest
+
+.PHONY: help all web image image-save fnos-fpk check vet test fmt clean
 
 help: ## 显示所有目标
 	@echo $(Q)OfflineU $(VERSION)$(Q)
@@ -48,6 +59,7 @@ help: ## 显示所有目标
 	@echo $(Q)  make all         Docker 镜像 + 64 位镜像 tar（一键出全部分发物）$(Q)
 	@echo $(Q)  make image        Docker 镜像 offlineu:local + offlineu:$(VERSION)$(Q)
 	@echo $(Q)  make image-save   64 位镜像导出 image-dist/offlineu-amd64-$(VERSION).tar$(Q)
+	@echo $(Q)  make fnos-fpk     飞牛 fnOS .fpk 外壳（需要 bash），产物 image-dist/offlineu_<版本>_<平台>.fpk$(Q)
 	@$(BLANK)
 	@echo $(Q)  make web          构建前端 web/dist（开发自检用，镜像内不需要）$(Q)
 	@echo $(Q)  make check        go vet + go test$(Q)
@@ -84,6 +96,20 @@ endif
 	docker save offlineu:local offlineu:$(VERSION) -o image-dist/offlineu-amd64-$(VERSION).tar
 	@echo $(Q)Done: image-dist/offlineu-amd64-$(VERSION).tar$(Q)
 	@echo $(Q)目标机上：docker load -i offlineu-amd64-$(VERSION).tar$(Q)
+
+# ---------------------------------------------------------------------------
+# 飞牛OS / fnOS .fpk 外壳。fpk 里只有 manifest / 生命周期脚本 / 安装向导 /
+# compose，应用本体还是 GHCR 上的镜像（目标机需要能拉取它，或先导入镜像 tar）。
+#
+#   make fnos-fpk                                   # x86 + 当前镜像 tag
+#   make fnos-fpk FNOS_PLATFORM=arm                 # ARM 机型
+#   make fnos-fpk FNOS_VERSION=1.0.0                # 指定 manifest 里的版本号
+#   make fnos-fpk FNOS_IMAGE=docker.m.daocloud.io/ghcr.io/nickkk333/offlineu
+# 产物名固定为 image-dist/offlineu_<版本>_<平台>.fpk（飞牛要求这种命名）。
+# 需要 bash（Linux、macOS、WSL、Git Bash 均可）。
+# ---------------------------------------------------------------------------
+fnos-fpk:
+	bash packaging/fnos-app/build-fpk.sh "$(FNOS_VERSION)" "$(FNOS_PLATFORM)" "$(FNOS_IMAGE):$(FNOS_IMAGE_TAG)"
 
 # ---------------------------------------------------------------------------
 # 检查与清理（开发用）

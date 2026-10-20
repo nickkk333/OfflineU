@@ -1,0 +1,15 @@
+appname         = offlineu
+version         = 0.0.0
+display_name    = OfflineU
+platform        = x86
+maintainer      = nickkk333
+maintainer_url  = https://github.com/nickkk333/OfflineU
+distributor     = nickkk333
+distributor_url = https://github.com/nickkk333/OfflineU
+desktop_uidir   = ui
+desktop_applaunchname = offlineu.Application
+service_port    = 5000
+checkport       = false
+desc            = 自托管离线课程播放器：把本地课程目录变成可浏览的课程面板，自动记录学习进度，支持转码播放与投屏。
+source          = thirdparty
+checksum        =

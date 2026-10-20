@@ -1,0 +1,14 @@
+{
+    ".url": {
+        "offlineu.Application": {
+            "title": "OfflineU",
+            "desc": "离线课程播放器",
+            "icon": "images/{0}.png",
+            "type": "url",
+            "port": "5000",
+            "protocol": "http",
+            "url": "/",
+            "allUsers": true
+        }
+    }
+}

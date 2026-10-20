@@ -13,8 +13,9 @@
 #       rules below only make that guarantee unambiguous.
 #   * cmd.exe batch scripts are the one exception that still needs CRLF.
 #
-# fnOS-specific rules are gone (the fpk packaging was removed); the global rule
-# above already covers every script that runs on a Linux host.
+# The fnOS .fpk packaging (packaging/fnos-app) ships shell scripts that run on a
+# Linux host, so it depends on this global rule as well; build-fpk.sh normalizes
+# CRLF once more for the files it copies out of the packaging toolkit.
 # ---------------------------------------------------------------------------
 * text=auto eol=lf
 

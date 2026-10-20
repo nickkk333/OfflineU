@@ -1,0 +1,39 @@
+[
+    {
+        "stepTitle": "OfflineU 安装设置",
+        "items": [
+            {
+                "type": "tips",
+                "helpText": "OfflineU 只读取你指定的课程目录：它会以<b>只读</b>方式挂载到容器的 <code>/courses</code>。<br>学习进度与转码缓存不放在课程目录里，而是写到安装卷的 <code>@appshare/offlineu</code> 下。"
+            },
+            {
+                "type": "text",
+                "field": "wizard_courses_dir",
+                "label": "课程目录（NAS 绝对路径）",
+                "initValue": "/vol1/1000/courses",
+                "rules": [
+                    {
+                        "required": true,
+                        "message": "请填写课程目录的绝对路径"
+                    },
+                    {
+                        "pattern": "^/[^:]*$",
+                        "message": "请填写以 / 开头的绝对路径，且不要包含冒号，例如 /vol1/1000/courses"
+                    }
+                ]
+            },
+            {
+                "type": "tips",
+                "helpText": "目录不存在时安装程序会自动创建（属主与上级目录一致）；课程文件可以装好之后再拷进去，不需要重新安装。"
+            },
+            {
+                "type": "tips",
+                "helpText": "⚠️ <b>安装完成后，请到「应用中心 → OfflineU → 应用设置 → 授权目录」把上面这个目录授权给本应用</b>（只读即可，不需要读写）。<br>没有授权时，fnOS 可能不允许应用访问该目录，界面会提示「已映射但读不到/为空」。"
+            },
+            {
+                "type": "tips",
+                "helpText": "本应用使用<b>宿主网络（host）</b>：容器直接占用宿主机 5000 端口，投屏（DLNA/SSDP）依赖这一模式。<br>装好后用 <code>http://NAS地址:5000</code> 访问。"
+            }
+        ]
+    }
+]

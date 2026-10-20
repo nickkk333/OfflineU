@@ -54,13 +54,14 @@ OfflineU 以**一个静态 Go 二进制**发布，Vue 前端已内置其中，�
 | `make all` | **Docker 镜像 + 64 位镜像文件** —— 完整发布包 |
 | `make image` | `offlineu:local` **和** `offlineu:<version>`（linux/amd64，64 位） |
 | `make image-save` | `image-dist/offlineu-amd64-<version>.tar`，供离线 `docker load` |
+| `make fnos-fpk` | `image-dist/offlineu_<版本>_<平台>.fpk`，飞牛 fnOS 应用外壳（需 bash） |
 | `make web` | 只构建前端（`web/dist`，开发自检） |
 | `make check` | `go vet` + `go test` |
 | `make clean` | 删除 `image-dist/` |
 
-> **只以 Docker 形式分发**：镜像与导出的 tar 都是 `linux/amd64`（64 位）；
+> **应用本体只以 Docker 形式分发**：镜像与导出的 tar 都是 `linux/amd64`（64 位）；
 > CI 另外会发布多架构 manifest（`linux/amd64` + `linux/arm64`）。
-> Windows exe 与 fnOS `.fpk` 打包已经移除。
+> Windows exe 已移除；飞牛 fnOS 的 `.fpk` 只是一个外壳（见 **飞牛 OS（fnOS）.fpk**）。
 
 版本号始终取自 git tag，与 `docker/run.ps1` 完全一致：
 `HEAD` 打了 `v2.1.2` 就是 `2.1.2`，否则是 `latest`。所以一次带版本号的发布是：
@@ -105,7 +106,8 @@ go build -trimpath -ldflags="-s -w -X github.com/nickkk333/offlineu/internal/off
 ```
 
 > **只以 Docker 形式分发** —— Dockerfile 自己交叉编译 Linux 二进制
-> （`linux/amd64` / `linux/arm64`）；不再有 Windows exe，也不再有 fnOS `.fpk`。
+> （`linux/amd64` / `linux/arm64`）；不再有 Windows exe。fnOS 的 `.fpk`
+> 只是安装外壳，里面跑的仍是同一个镜像（见 **飞牛 OS（fnOS）.fpk**）。
 > 本地 `go build` 仅供开发自检。
 
 ### 3. 运行
@@ -717,6 +719,47 @@ docker run -d --name offlineu -p 5000:5000 \
   （`image-dist/` 里的那个 tar 就是这样构建并做过加载测试的）。
 * 想在离线环境 `docker build`？那就把三个基础镜像也带上：
   `docker save -o bases.tar node:22-alpine golang:1.24-alpine alpine:3.21`。
+
+### 飞牛 OS（fnOS）.fpk
+
+`packaging/fnos-app/` 把 OfflineU 包成一个可以在飞牛OS「应用中心 → 手动安装」里直接装的 `.fpk`：
+
+```bash
+make fnos-fpk      # -> image-dist/offlineu_<版本>_<平台>.fpk（需要 bash / git / tar）
+make fnos-fpk FNOS_PLATFORM=arm    # ARM 机型（uname -m 输出 aarch64）
+make fnos-fpk FNOS_VERSION=1.0.0   # 指定 manifest 里的版本号
+```
+
+包名与 `manifest` 的 `version` 都有硬性规定：文件名必须是 `offlineu_<version>_<platform>.fpk`，
+`version` 必须是 `x[.y[.z]][-build]`（`latest` 不行，未打 tag 时脚本会自动换成 `0.0.<日期>`），
+`platform` 必须与 NAS 架构一致 —— 否则安装时会直接报「应用包不符合系统要求」。
+
+它只是一层外壳：包内只有 manifest、生命周期脚本、安装向导和 compose，
+应用本体仍是 `ghcr.io/nickkk333/offlineu`（可用 `FNOS_IMAGE` / `FNOS_IMAGE_TAG` 换成镜像加速前缀），
+所以目标机需要能拉取该镜像 —— 离线时先在飞牛OS 里导入镜像 tar，或改用本地仓库地址。
+
+安装向导只问一件事：**课程目录**（NAS 绝对路径，例如 `/vol1/1000/courses`）。
+这个目录会被只读挂载到容器的 `/courses`；不存在时安装程序会自动创建（属主沿用上级目录）。
+进度与转码缓存不放在课程目录里，而是固定写到应用所在卷的 `@appshare/offlineu/{data,cache}`，
+其中的 `data`、`cache` 会分别映射到容器的 `/app/data`、`/app/cache`。
+
+两件装完必须知道的事：
+
+* **授权目录** —— 到「应用中心 → OfflineU → 应用设置 → 授权目录」把刚填的课程目录授权给本应用
+  （只读即可）。未授权时 fnOS 可能挡住访问，界面会提示「已映射但读不到/为空」。
+  安装向导里也写了同一条提醒。
+* **宿主网络** —— compose 里是 `network_mode: host`，容器直接占用宿主机 5000 端口
+  （不做端口映射）。投屏（DLNA/SSDP 组播）依赖这个模式，装好后用 `http://<nas-ip>:5000` 访问。
+
+装不上时先看架构：SSH 里 `uname -m`，`x86_64` 用默认的 `x86` 包，`aarch64` 必须
+`make fnos-fpk FNOS_PLATFORM=arm`。要更具体的失败原因，可在 NAS 上直接跑
+`appcenter-cli install-fpk /path/to/offlineu_<版本>_<平台>.fpk`，或看 `/var/log/appcenter/`。
+
+路径是 **compose 里的变量**，由 fnOS 在创建容器时替换，不是安装脚本改文件：
+`${wizard_courses_dir}`（向导里填的目录）、`${TRIM_DATA_SHARE_PATHS}`（data-share 声明出来的
+`<安装卷>/@appshare/offlineu`）。所以升级、改设置都走同一个通道，不用重填；
+`cmd/service-setup` 只负责把目录建出来、把 `data`/`cache` 的属主改成容器里的 `uid 10001`，
+并把最后用的路径记在 `$TRIM_PKGVAR/.coursesdir`。
 
 ### NAS 的 Docker 图形界面（飞牛OS / fnOS、群晖、Unraid 等）
 

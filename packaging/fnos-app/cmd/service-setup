@@ -1,0 +1,169 @@
+#!/bin/bash
+# Docker 模式的安装/升级钩子。
+#
+# 三个挂载点的真实路径不在这里决定，而是 compose 里的
+#   ${wizard_courses_dir}      安装向导填写的课程目录
+#   ${TRIM_DATA_SHARE_PATHS}   data-share 声明出来的 <安装卷>/@appshare/offlineu
+#   ${TRIM_APPDEST_VOL}        安装卷，兜底用
+# 由 fnOS 在**创建容器时**替换。钩子里 sed 改 compose 是没用的：
+# app.tgz 的解包发生在创建容器之前，会把改动覆盖掉。
+#
+# 所以这里只做三件事：
+#   1. 把目录建出来（属主沿用上级目录，别在用户的共享目录里留一个 root 独有的空目录）
+#   2. 把 /app/data、/app/cache 对应的宿主目录交给容器里的 uid/gid 10001
+#   3. 把结果记进 TRIM_PKGVAR，升级/排查时知道当初用的是哪些目录
+#
+# 由 cmd/installer 在 source 了 common（提供 install_log / error_exit）之后加载。
+
+# 上次算出来的目录：升级时不会再弹向导，compose 的 ${wizard_courses_dir} 也就没有来源
+COURSES_SAVE="${TRIM_PKGVAR}/.coursesdir"
+SHARE_SAVE="${TRIM_PKGVAR}/.sharedir"
+
+# 镜像里的 offlineu 以 uid/gid 10001 运行（见仓库根目录 Dockerfile）：
+# /app/data 与 /app/cache 必须让这个 uid 能写，容器才存得下进度和转码缓存。
+CONTAINER_UID=10001
+
+# ---------------------------------------------------------------------------
+# 路径工具
+# ---------------------------------------------------------------------------
+
+# 去掉首尾空白、CR 和结尾斜杠（粘贴路径时最容易带上这些）
+normalize_dir() {
+    local dir="$1"
+    dir="${dir%$'\r'}"
+    dir="$(printf '%s' "${dir}" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+    while [ "${dir%/}" != "${dir}" ] && [ "${dir}" != "/" ]; do
+        dir="${dir%/}"
+    done
+    printf '%s' "${dir}"
+}
+
+# 必须是绝对路径；冒号和换行会破坏 compose 的 volume 一行
+is_usable_dir() {
+    case "$1" in
+        "" | /*) ;;
+        *) return 1 ;;
+    esac
+    [ -n "$1" ] || return 1
+    case "$1" in
+        *:* | *$'\n'* | *$'\r'*) return 1 ;;
+    esac
+    return 0
+}
+
+# 应用的数据共享目录：config/resource 里声明了 data-share "offlineu"，
+# 规范路径就是 <应用所在卷>/@appshare/offlineu
+resolve_share_dir() {
+    local base="${TRIM_DATA_SHARE_PATHS%%:*}"
+    if [ -z "${base}" ]; then
+        if [ -n "${TRIM_APPDEST_VOL:-}" ]; then
+            base="${TRIM_APPDEST_VOL%/}/@appshare/${TRIM_APPNAME}"
+        else
+            # TRIM_PKGVAR 形如 /vol1/@appdata/offlineu，退回同一卷的 @appshare
+            base="${TRIM_PKGVAR%/@appdata/*}/@appshare/${TRIM_APPNAME}"
+        fi
+    fi
+    normalize_dir "${base}"
+}
+
+# 优先用上次保存的值，保证升级前后指向同一个目录；
+# 那个存储空间已经不在了（换盘/拔盘/重装到别的卷）就改回当前安装卷
+resolve_share_dir_saved() {
+    local dir="" volume=""
+    if [ -r "${SHARE_SAVE}" ]; then
+        dir="$(normalize_dir "$(cat "${SHARE_SAVE}")")"
+    fi
+    if is_usable_dir "${dir}"; then
+        volume="/$(printf '%s' "${dir}" | awk -F/ '{print $2}')"
+        if [ -d "${volume}" ]; then
+            printf '%s' "${dir}"
+            return 0
+        fi
+        # 本函数的结果会被 $(...) 捕获，日志必须走 stderr，否则会混进路径里
+        install_log "警告：上次使用的共享目录 ${dir} 不在已挂载的存储空间里，改用当前安装卷" >&2
+    fi
+    resolve_share_dir
+}
+
+# 课程目录优先级：安装向导的输入 > 上次保存的值 > <共享目录>/courses
+resolve_courses_dir() {
+    local dir=""
+    if [ -n "${wizard_courses_dir:-}" ]; then
+        dir="$(normalize_dir "${wizard_courses_dir}")"
+        if is_usable_dir "${dir}"; then
+            printf '%s' "${dir}"
+            return 0
+        fi
+        # 同上：结果会被 $(...) 捕获，日志走 stderr
+        install_log "警告：安装向导里的课程目录 '${wizard_courses_dir}' 不是可用的绝对路径，已忽略" >&2
+    fi
+    if [ -r "${COURSES_SAVE}" ]; then
+        dir="$(normalize_dir "$(cat "${COURSES_SAVE}")")"
+        if is_usable_dir "${dir}"; then
+            printf '%s' "${dir}"
+            return 0
+        fi
+    fi
+    printf '%s/courses' "$(resolve_share_dir_saved)"
+}
+
+# 建目录：不存在的目录自动创建，属主沿用上级目录
+ensure_dir() {
+    local dir="$1" label="$2" volume parent
+    volume="/$(printf '%s' "${dir}" | awk -F/ '{print $2}')"
+    if [ ! -d "${volume}" ]; then
+        error_exit "${label} ${dir} 所在的存储空间 ${volume} 不存在，请在安装向导中填写已存在的绝对路径（例如 /vol1/1000/courses）"
+    fi
+    [ -d "${dir}" ] && return 0
+    if mkdir -p "${dir}" 2>/dev/null; then
+        parent="$(dirname "${dir}")"
+        chown --reference="${parent}" "${dir}" 2>/dev/null || true
+        chmod 0775 "${dir}" 2>/dev/null || true
+        install_log "已创建${label}：${dir}"
+        return 0
+    fi
+    error_exit "${label} ${dir} 不存在且无法创建，请先在 fnOS 的文件管理中创建该目录，再重新安装"
+}
+
+# ---------------------------------------------------------------------------
+# 安装 / 升级
+# ---------------------------------------------------------------------------
+
+apply_paths() {
+    local share courses data cache
+
+    share="$(resolve_share_dir_saved)"
+    courses="$(resolve_courses_dir)"
+    data="${share}/data"
+    cache="${share}/cache"
+
+    # 容器里的 uid 10001 要能穿过 @appshare/offlineu：默认权限是 0770 时补上 o+x
+    mkdir -p "${share}" 2>/dev/null || true
+    chmod o+x "${share}" 2>/dev/null || true
+
+    ensure_dir "${courses}" "课程目录"
+    ensure_dir "${data}" "数据目录"
+    ensure_dir "${cache}" "缓存目录"
+
+    if ! chown -R "${CONTAINER_UID}:${CONTAINER_UID}" "${data}" "${cache}" 2>/dev/null; then
+        chmod -R 0777 "${data}" "${cache}" 2>/dev/null || true
+    fi
+
+    printf '%s\n' "${courses}" > "${COURSES_SAVE}"
+    printf '%s\n' "${share}" > "${SHARE_SAVE}"
+
+    install_log "课程目录：${courses} -> /courses（只读）"
+    install_log "数据目录：${data} -> /app/data"
+    install_log "缓存目录：${cache} -> /app/cache"
+    install_log "提醒：请到「应用中心 -> OfflineU -> 应用设置 -> 授权目录」把 ${courses} 授权给本应用（只读即可），否则容器可能读不到课程文件"
+}
+
+service_postinst() {
+    apply_paths
+}
+
+service_postupgrade() {
+    # compose 里的 ${wizard_courses_dir} 在没带参数的升级里靠 fnOS 保存的向导答案，
+    # 目录本身还是按保存值建/校一遍，顺手把属主再对齐一次
+    apply_paths
+}
