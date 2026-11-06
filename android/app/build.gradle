@@ -2,6 +2,15 @@ plugins {
     id 'com.android.application'
 }
 
+// CI passes -PappVersionName / -PappVersionCode for tagged builds so the APK
+// carries the release version. Local builds keep the defaults below.
+def appVersionName = project.hasProperty('appVersionName')
+        ? project.property('appVersionName').toString()
+        : '1.0.0'
+def appVersionCode = project.hasProperty('appVersionCode')
+        ? project.property('appVersionCode').toString().toInteger()
+        : 1
+
 android {
     namespace 'com.nickkk333.offlineu'
     compileSdk 34
@@ -10,8 +19,8 @@ android {
         applicationId "com.nickkk333.offlineu"
         minSdk 24
         targetSdk 34
-        versionCode 1
-        versionName "1.0.0"
+        versionCode appVersionCode
+        versionName appVersionName
     }
 
     buildTypes {

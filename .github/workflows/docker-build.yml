@@ -29,7 +29,9 @@ jobs:
     - name: Compute version (tag -> X.Y.Z, otherwise latest)
       id: v
       run: |
-        if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+        # workflow_dispatch can be aimed at an existing tag to re-attach assets;
+        # GITHUB_REF_TYPE is not always "tag" in that case, so check the ref too.
+        if [ "${GITHUB_REF_TYPE}" = "tag" ] || [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
           V="${GITHUB_REF_NAME#v}"
           R="true"
         else
@@ -196,11 +198,63 @@ jobs:
         path: image-dist/*.fpk
         retention-days: 14
 
-  # ---- Release: attach the image file and the fnOS package when a v* tag is pushed ----
+  # ---- Android client: a directly sideloadable debug APK on every push ----
+  # A v* tag additionally attaches it to the GitHub Release (see release job).
+  android-apk:
+    name: Build Android APK
+    needs: [version]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Set up JDK 17
+      uses: actions/setup-java@v4
+      with:
+        distribution: temurin
+        java-version: '17'
+        cache: gradle
+
+    - name: Set up Android SDK
+      uses: android-actions/setup-android@v3
+
+    - name: Install Android SDK 34
+      run: |
+        yes | sdkmanager --licenses > /dev/null || true
+        sdkmanager --install "platforms;android-34" "build-tools;34.0.0"
+
+    - name: Assemble debug APK
+      working-directory: android
+      env:
+        V: ${{ needs.version.outputs.version }}
+      run: |
+        set -e
+        # The wrapper was committed from Windows, so it has no executable bit.
+        chmod +x gradlew
+        VERSION_ARGS=""
+        if [[ "$V" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+          IFS='.' read -r MAJOR MINOR PATCH <<< "$V"
+          VERSION_ARGS="-PappVersionName=$V -PappVersionCode=$((MAJOR * 10000 + MINOR * 100 + PATCH))"
+        fi
+        ./gradlew assembleDebug --no-daemon --stacktrace $VERSION_ARGS
+        cp app/build/outputs/apk/debug/app-debug.apk "../offlineu-android-$V.apk"
+        ls -lh "../offlineu-android-$V.apk"
+
+    - name: Upload APK artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: offlineu-${{ needs.version.outputs.version }}-android-apk
+        path: offlineu-android-*.apk
+        retention-days: 14
+        if-no-files-found: error
+
+  # ---- Release: attach the image file, the fnOS package and the APK when a v* tag is pushed ----
   release:
     name: Publish GitHub release
     if: startsWith(github.ref, 'refs/tags/')
-    needs: [docker, image-tar, fnos-fpk]
+    needs: [docker, image-tar, fnos-fpk, android-apk]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -232,7 +286,8 @@ jobs:
           ## OfflineU ${{ github.ref_name }}
 
           应用本体只走 **Docker**（多架构镜像仓库 + 64 位 `linux/amd64` 镜像文件）；
-          飞牛 fnOS 另有一个 `.fpk` 安装外壳，里面跑的也是同一个镜像。
+          飞牛 fnOS 另有一个 `.fpk` 安装外壳，里面跑的也是同一个镜像；
+          手机端提供可直接侧载的 Android `.apk`（WebView 客户端）。
 
           ### Docker（多架构 amd64 / arm64）
           ```bash
@@ -262,10 +317,17 @@ jobs:
           > 包里不含镜像，NAS 需要能拉取 `ghcr.io/${{ steps.ver.outputs.image }}:${{ steps.ver.outputs.version }}`；
           > 离线环境请先导入下面的镜像文件，或重新用 `FNOS_IMAGE` 指向本地仓库打包。
 
+          ### Android 客户端（.apk）
+          `offlineu-android-${{ steps.ver.outputs.version }}.apk` —— 安装后在登录页填写服务器地址，
+          还可以直接配置 WebDAV / SMB / 本地目录课程来源。
+          > CI 使用自动生成的 debug 签名，可直接 `adb install -r` 侧载；上架前请按
+          > [`android/README.md`](android/README.md) 配置正式签名。
+
           | 文件 | 说明 |
           | --- | --- |
           | `offlineu-amd64-${{ steps.ver.outputs.version }}.tar` | Docker 镜像文件（linux/amd64，`docker load -i` 用） |
           | `offlineu_${{ steps.ver.outputs.version }}_x86.fpk` | 飞牛 fnOS 安装包（x86，手动安装） |
+          | `offlineu-android-${{ steps.ver.outputs.version }}.apk` | Android 客户端（debug 签名，可直接侧载） |
           | `checksums.txt` | SHA-256 校验和 |
 
           版本号跟随 git tag（`${{ github.ref_name }}` → `${{ steps.ver.outputs.version }}`），镜像 tag、`--build-arg VERSION` 与文件名同步。

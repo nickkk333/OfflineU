@@ -246,12 +246,13 @@ Android 客户端的登录页选择 **WebDAV / SMB / 本地目录** 并填写连
 
 ```bash
 cd android
-chmod +x gradlew                 # 仅 Linux/macOS 首次运行
 ./gradlew assembleDebug          # Windows: gradlew.bat assembleDebug
 adb install -r app/build/outputs/apk/debug/app-debug.apk
 ```
 
-APK 不在仓库内提供，需要用 Android Studio 或本机 SDK 构建；完整步骤、签名与调试说明见
+仓库不提交 APK：GitHub Actions 每次推送都会构建 debug APK 并上传为 CI artifact
+（`offlineu-<版本>-android-apk`）；打 `v*` tag 时会自动把
+`offlineu-android-<版本>.apk` 挂到对应 Release。完整步骤、签名与调试说明见
 [`android/README.md`](android/README.md)。
 
 > 手机连接时请填写电脑/NAS 的局域网 IP，不要填 `127.0.0.1`。Docker 镜像默认监听

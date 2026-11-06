@@ -60,6 +60,12 @@ chmod +x gradlew
 android/app/build/outputs/apk/debug/app-debug.apk
 ```
 
+GitHub Actions 每次推送都会构建这个 debug APK，命名为
+`offlineu-android-<版本>.apk`（日常构建版本为 `latest`），上传为 CI artifact；
+打 `v*` tag 时会自动挂到对应的 GitHub Release。tag 构建会用
+`-PappVersionName=<版本>` 和 `-PappVersionCode=主版本*10000+次版本*100+修订号`
+注入版本号，本地构建则沿用 `app/build.gradle` 里的默认值。
+
 安装：
 
 ```bash
