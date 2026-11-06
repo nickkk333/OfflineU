@@ -450,18 +450,6 @@ html {
     font-size: 0.82rem;
   }
 
-  .toasts {
-    top: auto;
-    left: 12px;
-    right: 12px;
-    bottom: calc(12px + env(safe-area-inset-bottom, 0px));
-    max-width: none;
-  }
-
-  .toast-enter-from,
-  .toast-leave-to {
-    transform: translateY(16px) scale(0.98);
-  }
 }
 
 @media (max-width: 480px) {

@@ -36,6 +36,9 @@ const ICONS = { success: '✓', error: '!', info: 'i' }
   flex-direction: column;
   gap: 10px;
   max-width: min(380px, calc(100vw - 36px));
+  /* The wrapper may span the whole viewport on phones: never let it swallow
+     taps meant for the page underneath. Only the toast cards are clickable. */
+  pointer-events: none;
 }
 
 .toast {
@@ -50,6 +53,7 @@ const ICONS = { success: '✓', error: '!', info: 'i' }
   box-shadow: var(--shadow);
   cursor: pointer;
   font-size: 0.9rem;
+  pointer-events: auto;
 }
 
 .toast__icon {
@@ -90,5 +94,23 @@ const ICONS = { success: '✓', error: '!', info: 'i' }
 .toast-leave-to {
   opacity: 0;
   transform: translateX(30px) scale(0.96);
+}
+
+/* Keep the responsive rules inside this component: a global .toasts rule in
+   main.css loses to the scoped selector above, which used to leave top+right
+   from here combined with left+bottom from there (a full-screen hit target). */
+@media (max-width: 720px) {
+  .toasts {
+    top: auto;
+    bottom: calc(12px + env(safe-area-inset-bottom, 0px));
+    left: 12px;
+    right: 12px;
+    max-width: none;
+  }
+
+  .toast-enter-from,
+  .toast-leave-to {
+    transform: translateY(16px) scale(0.98);
+  }
 }
 </style>
