@@ -6,8 +6,7 @@
 #   bash packaging/fnos-app/build-fpk.sh [version] [platform] [image] [output]
 #     version  写进 manifest 的版本号，必须形如 1.2.3 / 1.2.3-beta
 #              （非数字版本——例如 latest——会被飞牛拒绝安装，脚本会换成 0.0.<日期>）
-#     platform 目标平台，x86（= 64 位 x86_64 / amd64）、arm 或 all（默认 x86）。
-#             飞牛只认这几个值；x64 / x86_64 / amd64 会自动归一化成 x86
+#     platform 目标平台，x86 或 arm（默认 x86；必须与 NAS 的架构一致）
 #     image    容器内使用的镜像，带 tag 的完整引用（默认 ghcr.io/nickkk333/offlineu:latest）
 #     output   产物路径，相对路径基于仓库根目录
 #              （默认 image-dist/offlineu_<version>_<platform>.fpk，飞牛要求这种命名）
@@ -28,14 +27,6 @@ APP_SRC="$SCRIPT_DIR"
 APPNAME="offlineu"
 
 PLATFORM="${2:-x86}"
-# fnOS 的 platform 只接受 x86 / arm / all，其中 x86 就是 64 位 x86_64（amd64）。
-# 写成 x64 会被判成「应用包不符合系统要求」，这里把常见的 64 位叫法归一化。
-case "$PLATFORM" in
-  x64|x86_64|amd64)
-    echo ">>> 提示：'${PLATFORM}' 在 fnOS 里写作 x86（64 位 x86_64），已自动归一化"
-    PLATFORM=x86
-    ;;
-esac
 IMAGE="${3:-ghcr.io/nickkk333/offlineu:latest}"
 
 # fnOS 只认 x[.y[.z]][-build] 这种数字版本；`latest`、commit hash 之类会被判成

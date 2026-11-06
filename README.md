@@ -832,13 +832,6 @@ make fnos-fpk FNOS_VERSION=1.0.0   # 指定 manifest 里的版本号
 `version` 必须是 `x[.y[.z]][-build]`（`latest` 不行，未打 tag 时脚本会自动换成 `0.0.<日期>`），
 `platform` 必须与 NAS 架构一致 —— 否则安装时会直接报「应用包不符合系统要求」。
 
-> **关于 x86 / x64**：飞牛的 `platform` 只接受 `x86` / `arm` / `all`，其中 `x86` 指
-> 64 位 `x86_64`（包内镜像是 `linux/amd64`），**不是 32 位包**。写成 `x64` 会被系统拒绝安装，
-> 所以 `build-fpk.sh` 会把 `x64` / `x86_64` / `amd64` 自动归一化成 `x86`。
-> GitHub Release 同时提供 `offlineu_<版本>_x86.fpk` 与内容完全相同的
-> `offlineu_<版本>_x64.fpk` 副本；按 64 位名称取用下载 x64 那份即可，
-> **实际安装建议用 `_x86.fpk`**（文件名与 manifest 的 platform 一致）。
-
 它只是一层外壳：包内只有 manifest、生命周期脚本、安装向导和 compose，
 应用本体仍是 `ghcr.io/nickkk333/offlineu`（可用 `FNOS_IMAGE` / `FNOS_IMAGE_TAG` 换成镜像加速前缀），
 所以目标机需要能拉取该镜像 —— 离线时先在飞牛OS 里导入镜像 tar，或改用本地仓库地址。
