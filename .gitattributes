@@ -38,6 +38,9 @@
 *.pdf               binary
 *.zip               binary
 *.gz                binary
+*.jar               binary
+*.jks               binary
+*.keystore          binary
 *.tar               binary
 *.exe               binary
 *.dll               binary

@@ -346,11 +346,29 @@ func ReadSubtitleText(path string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	return DecodeSubtitleText(data), nil
+}
+
+// ReadSubtitleText is the Config-aware variant for source files.
+func (c *Config) ReadSubtitleText(path string) (string, error) {
+	if !c.IsRemotePath(path) {
+		return ReadSubtitleText(path)
+	}
+	data, err := c.ReadFilePath(path, 16<<20)
+	if err != nil {
+		return "", err
+	}
+	return DecodeSubtitleText(data), nil
+}
+
+// DecodeSubtitleText decodes subtitle bytes: UTF-8 is used when valid, else the
+// Windows-1252 fallback.
+func DecodeSubtitleText(data []byte) string {
 	data = bytes.TrimPrefix(data, []byte{0xEF, 0xBB, 0xBF})
 	if utf8.Valid(data) {
-		return string(data), nil
+		return string(data)
 	}
-	return decodeCP1252(data), nil
+	return decodeCP1252(data)
 }
 
 func decodeCP1252(data []byte) string {

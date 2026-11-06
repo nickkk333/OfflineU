@@ -1,5 +1,6 @@
 <script setup>
 import { computed, onMounted } from 'vue'
+import { RouterLink } from 'vue-router'
 import { refreshState, store } from '../store.js'
 import { t } from '../i18n.js'
 import CoursePicker from './CoursePicker.vue'
@@ -33,6 +34,10 @@ onMounted(() => {
       </div>
       <span class="spacer"></span>
       <span v-if="versionLabel" class="badge">{{ versionLabel }}</span>
+      <RouterLink to="/login" class="btn btn--ghost btn--sm home__sources" :title="t('login.title')">
+        <span aria-hidden="true">🔗</span>
+        <span class="home__sources-label">{{ t('login.shortTitle') }}</span>
+      </RouterLink>
       <LanguageSwitch />
     </header>
 
@@ -75,6 +80,12 @@ onMounted(() => {
   margin-bottom: -6px;
 }
 
+.home__sources {
+  gap: 7px;
+  flex: none;
+  text-decoration: none;
+}
+
 .brand {
   display: flex;
   align-items: center;
@@ -97,5 +108,42 @@ onMounted(() => {
   font-size: 1.45rem;
   font-weight: 700;
   letter-spacing: -0.02em;
+}
+
+@media (max-width: 560px) {
+  .home {
+    padding-top: max(16px, env(safe-area-inset-top, 0px));
+    gap: 16px;
+  }
+
+  .brand {
+    gap: 10px;
+    flex-wrap: wrap;
+  }
+
+  .brand__logo {
+    width: 38px;
+    height: 38px;
+    border-radius: 11px;
+    font-size: 1.1rem;
+  }
+
+  .brand__name {
+    font-size: 1.2rem;
+  }
+
+  .brand .faint {
+    font-size: 0.76rem;
+    line-height: 1.4;
+  }
+
+  /* Keep the header on one line on narrow phones: the icon alone is enough. */
+  .home__sources-label {
+    display: none;
+  }
+
+  .home__sources {
+    padding: 8px 10px;
+  }
 }
 </style>

@@ -15,6 +15,9 @@ export const store = reactive({
   recentCourses: [],
   roots: [],
   rootsDisplay: [],
+  // WebDAV / SMB / local folders configured from the picker. The public shape
+  // never contains a password, only `has_password`.
+  sources: [],
   needsMount: false,
   // Why the picker is empty ("empty", "unreadable", "missing", "no_roots") plus
   // the per-folder state, so the notice can name the real cause.
@@ -36,6 +39,7 @@ function applyState(payload) {
   store.recentCourses = payload.recent_courses || []
   store.roots = payload.roots || []
   store.rootsDisplay = payload.roots_display || []
+  store.sources = payload.sources || []
   store.needsMount = Boolean(payload.needs_mount)
   store.mountIssue = payload.mount_issue || ''
   store.rootsDetail = payload.roots_detail || []

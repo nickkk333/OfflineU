@@ -393,12 +393,93 @@ textarea {
   margin-bottom: 10px;
 }
 
+/* Phones and small tablets ------------------------------------------- */
+/* `100dvh` (not `100vh`) keeps the layout stable while a mobile browser
+   shows/hides its address bar. The safe-area insets keep controls clear of
+   notches and home indicators when OfflineU runs as a WebView / PWA. */
+html {
+  -webkit-text-size-adjust: 100%;
+}
+
+@supports (height: 100dvh) {
+  html,
+  body,
+  #app {
+    min-height: 100dvh;
+  }
+}
+
 @media (max-width: 720px) {
   .shell {
-    width: min(1240px, 100% - 24px);
+    width: calc(100% - 24px);
   }
 
   .card {
     padding: 18px;
+    border-radius: 18px;
+  }
+
+  /* 16px keeps iOS from zooming the whole page when a field is focused. */
+  input,
+  select,
+  textarea {
+    font-size: 16px;
+  }
+
+  .section-title {
+    font-size: 1.02rem;
+  }
+
+  .btn {
+    padding: 10px 15px;
+  }
+
+  .btn--sm {
+    padding: 8px 12px;
+  }
+
+  /* Comfortable touch targets on a phone (the WebView client uses these too). */
+  .btn,
+  .icon-btn,
+  .input {
+    min-height: 44px;
+  }
+
+  .faint,
+  .mono {
+    font-size: 0.82rem;
+  }
+
+  .toasts {
+    top: auto;
+    left: 12px;
+    right: 12px;
+    bottom: calc(12px + env(safe-area-inset-bottom, 0px));
+    max-width: none;
+  }
+
+  .toast-enter-from,
+  .toast-leave-to {
+    transform: translateY(16px) scale(0.98);
+  }
+}
+
+@media (max-width: 480px) {
+  .shell {
+    width: calc(100% - 16px);
+  }
+
+  .card {
+    padding: 15px;
+    border-radius: 16px;
+  }
+
+  .btn {
+    padding: 10px 13px;
+    font-size: 0.86rem;
+  }
+
+  .badge {
+    font-size: 0.72rem;
   }
 }

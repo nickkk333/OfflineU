@@ -13,21 +13,31 @@ import (
 // they never show up in the course content; the raw list is kept on the
 // Course so the UI can offer to restore entries.
 func (c *Config) ScanCourse(coursePath string) (*Course, error) {
-	base, err := filepath.Abs(ExpandHome(coursePath))
-	if err != nil {
-		return nil, fmt.Errorf("invalid course path: %s (%v)", coursePath, err)
-	}
-	if resolved, err := filepath.EvalSymlinks(base); err == nil {
-		base = resolved
-	}
-	info, err := os.Stat(base)
-	if err != nil || !info.IsDir() {
-		return nil, fmt.Errorf("invalid course path: %s", coursePath)
+	base := strings.TrimSpace(coursePath)
+	if c.IsRemotePath(base) {
+		base = filepath.Clean(base)
+		info, err := c.StatPath(base)
+		if err != nil || !info.IsDir() {
+			return nil, fmt.Errorf("invalid course path: %s", coursePath)
+		}
+	} else {
+		absolute, err := filepath.Abs(ExpandHome(coursePath))
+		if err != nil {
+			return nil, fmt.Errorf("invalid course path: %s (%v)", coursePath, err)
+		}
+		base = absolute
+		if resolved, err := filepath.EvalSymlinks(base); err == nil {
+			base = resolved
+		}
+		info, err := os.Stat(base)
+		if err != nil || !info.IsDir() {
+			return nil, fmt.Errorf("invalid course path: %s", coursePath)
+		}
 	}
 
 	root := c.buildDirectoryTree(base, base, 0)
 	course := &Course{
-		Name:         filepath.Base(base),
+		Name:         c.CourseBaseName(base),
 		Path:         base,
 		Root:         root,
 		ProgressFile: c.ProgressFileFor(base),
@@ -49,7 +59,7 @@ func (c *Config) buildDirectoryTree(coursePath, currentPath string, depth int) *
 		return node
 	}
 
-	entries, err := sortedEntries(currentPath)
+	entries, err := c.sortedEntries(currentPath)
 	if err != nil {
 		return node
 	}
@@ -73,7 +83,7 @@ func (c *Config) buildDirectoryTree(coursePath, currentPath string, depth int) *
 			subtitles = append(subtitles, full)
 			continue
 		}
-		if lesson := createLessonFromFile(full, coursePath); lesson != nil {
+		if lesson := c.createLessonFromFile(full, coursePath); lesson != nil {
 			node.Lessons = append(node.Lessons, lesson)
 			node.HasContent = true
 		}
@@ -121,6 +131,16 @@ func attachSubtitles(lessons []*Lesson, subtitles []string, coursePath string) {
 // createLessonFromFile builds a lesson from a single file, or nil when the file
 // is not course content.
 func createLessonFromFile(filePath, coursePath string) *Lesson {
+	return createLessonWithProbe(filePath, coursePath, looksLikeVideo)
+}
+
+// createLessonFromFile is the Config-aware variant: a remote source needs its
+// ambiguous .ts files inspected through the source backend.
+func (c *Config) createLessonFromFile(filePath, coursePath string) *Lesson {
+	return createLessonWithProbe(filePath, coursePath, c.looksLikeVideo)
+}
+
+func createLessonWithProbe(filePath, coursePath string, probe func(string, string) bool) *Lesson {
 	extension := strings.ToLower(filepath.Ext(filePath))
 	if extIn(extension, skipExtensions) {
 		return nil
@@ -142,7 +162,7 @@ func createLessonFromFile(filePath, coursePath string) *Lesson {
 	}
 
 	switch {
-	case extIn(extension, videoExtensions) && looksLikeVideo(filePath, extension):
+	case extIn(extension, videoExtensions) && probe(filePath, extension):
 		lesson.LessonType = "video"
 		lesson.VideoFile = relative
 		lesson.VideoMime = GuessMime(filePath, "video/mp4")
@@ -179,6 +199,22 @@ func looksLikeVideo(path, extension string) bool {
 	return looksLikeMPEGTS(path)
 }
 
+// looksLikeVideo is the remote-aware variant used while scanning a source.
+func (c *Config) looksLikeVideo(path, extension string) bool {
+	if !extIn(extension, ambiguousVideoExtensions) {
+		return true
+	}
+	if !c.IsRemotePath(path) {
+		return looksLikeMPEGTS(path)
+	}
+	handle, err := c.OpenPath(path)
+	if err != nil {
+		return false
+	}
+	defer handle.Close()
+	return looksLikeMPEGTSStream(handle)
+}
+
 // Packet sizes a transport stream comes in: plain TS uses 188-byte packets, a
 // Blu-ray style .m2ts prefixes each of them with a 4-byte timestamp (192).
 var tsPacketSizes = []int{188, 192}
@@ -203,7 +239,10 @@ func looksLikeMPEGTS(path string) bool {
 		return false
 	}
 	defer handle.Close()
+	return looksLikeMPEGTSStream(handle)
+}
 
+func looksLikeMPEGTSStream(handle io.Reader) bool {
 	window := 0
 	for _, size := range tsPacketSizes {
 		if size*tsSyncPackets > window {

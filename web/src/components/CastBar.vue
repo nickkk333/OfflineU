@@ -290,4 +290,25 @@ async function stop() {
   flex-wrap: wrap;
   font-size: 0.82rem;
 }
+
+@media (max-width: 640px) {
+  .cast-bar {
+    top: 4px;
+    padding: 12px;
+  }
+
+  .cast-bar__time {
+    flex-basis: 100%;
+    order: 10;
+  }
+
+  .cast-bar__actions .btn {
+    flex: 1;
+  }
+
+  .cast-bar__actions .spacer,
+  .cast-bar__actions .faint {
+    display: none;
+  }
+}
 </style>

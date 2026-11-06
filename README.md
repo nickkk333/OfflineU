@@ -4,7 +4,7 @@
 变成一个可自由浏览的课程面板，并自动记录学习进度。无论是 Udemy 下载包、"开源"培训资料，还是你自己的笔记，
 直接指过去就行 —— 不需要元数据，不需要数据库，也不需要云端。
 
-后端是一个**单文件静态 Go 二进制**（仅用标准库），内置重新设计过的 **Vue 3** 前端，
+后端是一个**单文件静态 Go 二进制**（Go 标准库 + `go-smb2` 提供 SMB 来源），内置重新设计过的 **Vue 3** 前端，
 所以部署就是"一个文件"：不需要 Python，不需要 Node，不需要虚拟环境，也没有任何运行时依赖。
 
 ---
@@ -35,6 +35,10 @@
 * 🧑‍💻 **适配任意课程格式** —— 不需要元数据，只需要有结构的文件夹。
 * 🌐 **中英文双语** —— 右上角按钮可在 English 与中文之间切换整个界面。
   选择会记在浏览器里；服务端自己生成的少量文案（挂载提示）则跟随 SPA 发来的 `Accept-Language` 请求头。
+* ☁️ **可插拔的课程来源** —— WebDAV、SMB/CIFS 和服务器本地目录都能在**连接页/登录时**直接输入，
+  密码只保存在服务端；课程不必先搬进容器。已配置的来源可随时编辑、测试或删除。
+* 📱 **Android WebView 客户端** —— 同一套界面装进手机，登录页可同时填写服务器地址与课程来源，
+  支持全屏视频、局域网地址记忆与自签名证书；网页已针对手机窄屏与横屏适配。
 * 🐳 **自托管 Docker 部署**，并带有可配置、加固过的文件访问白名单。
 
 ---
@@ -170,6 +174,88 @@ My Course/
   它位于 `OFFLINEU_PROGRESS_DIR`，若未设置则在工作目录旁的 `data/` 文件夹里。
   每条记录都缓存了课时总数（`total_lessons`），这样选择器无需重新扫描课程就能显示完成百分比；
   `completed_lessons` 则在每次 `/api/state` 调用时从进度文件统计。
+* **课程来源** —— `sources.json` 与课程台账同目录（`StateDir`），保存 WebDAV/SMB/本地目录配置，
+  权限 `0600`。密码只存在这里，任何 API 都不会返回。
+
+---
+
+## ☁️ 课程来源（本地目录 / WebDAV / SMB）
+
+OfflineU 不再要求课程必须挂载进容器。打开课程选择器，在 **课程来源** 面板里可以直接添加：
+
+| 类型 | 需要填写 | 说明 |
+| ---- | -------- | ---- |
+| 本地文件夹 | 路径 | 服务器进程能读到的目录。设置 `OFFLINEU_ROOTS` 时只能选择白名单内的路径。 |
+| WebDAV | URL、用户名、密码 | 支持 HTTPS；NAS 使用自签名证书时可勾选“接受自签名证书”。 |
+| SMB / Windows 共享 | 主机（可含端口）、共享名、用户名、密码 | 可选共享内路径与域（Domain），默认端口 445。 |
+
+添加后会出现在选择器与目录浏览器的“课程来源”快捷入口里。服务器把它们映射到虚拟绝对路径
+`/__offlineu_sources__/<id>/...`（Windows 为 `\\offlineu_sources__\<id>\...`），
+所以课程树、课时链接、排除名单和进度键的处理方式与普通文件夹完全一致。
+
+* **密码只保存在服务端**：`sources.json` 位于 `StateDir`（Docker 为 `/app/data`；设置
+  `OFFLINEU_PROGRESS_DIR` 时跟随它，否则是 `data/`），权限 `0600`。`/api/sources`
+  只返回 `has_password`，不会回传密码。
+* **来源可以编辑**：面板里的 ✎ 按钮可改名、改地址或换密码；虚拟路径与进度键保持不变，
+  密码留空即沿用已保存的密码。
+* **删除来源不会删文件**：课程文件、学习进度和最近课程都会保留。
+* **远程来源不转码**：WebDAV/SMB 文件按原始字节流（支持 Range）发送，不经过 HLS、重新封装
+  或 ffprobe。能否播放取决于浏览器/WebView 的编解码支持。
+* **远程课程不写回远程目录**：进度与排除名单仍写入 `OFFLINEU_PROGRESS_DIR` / `StateDir`。
+
+### 🔑 登录时连接来源
+
+浏览器打开 `/login`（首页右上角的 🔗 按钮、课程选择器里的提示卡片都能进入），或在
+Android 客户端的登录页选择 **WebDAV / SMB / 本地目录** 并填写连接信息：
+
+* 服务端先实测连接，成功后才写入 `sources.json`；同一地址重复登录会**复用**已有来源，
+  不会产生重复项，也不会改变课程树与进度键。
+* 凭据只发往服务器一次，不保存在手机，也不会通过任何 API 回传；密码留空表示沿用服务器上已保存的密码。
+* 网页端可勾选「直接把这个目录作为课程打开」；否则进入课程选择器后再挑选具体的课程文件夹。
+* Android 端提交后进入课程选择器；「更换服务器」时不会向旧服务器添加来源，连接失败也可先打开网页再补配。
+
+对应接口 `POST /api/sources/connect`：
+
+```json
+{"kind": "webdav", "url": "https://nas.local:5006/dav/courses",
+ "username": "student", "password": "secret", "load": false}
+```
+
+应答包含 `source`（`root` 为虚拟路径）与 `action`（`created` / `updated` / `reused`）；
+`load: true` 时会直接把来源根目录设为当前课程。
+
+---
+
+## 📱 Android 客户端
+
+`android/` 是一个 **WebView 外壳**，不是第二套原生 UI：它加载同一套 Vue 页面和 API，
+学习进度、课程来源、投屏都由服务器处理。
+
+* 首次启动填写服务器地址（`192.168.1.10:5000` 会自动补成 `http://...`），并请求 `/health`；
+  服务器正在启动或健康检查被拦截时，可以选择“仍然打开”。
+* 登录页的「课程来源（可选）」可直接选择 WebDAV / SMB / 本地目录并填写连接信息。
+  点“连接”时先探测 `/health`，再调用 `/api/sources/connect` 验证并保存；凭据只存在服务器，
+  手机不保存。失败时可“不添加来源，直接打开”，之后在网页的课程来源面板里补配。
+* 页面在手机上按窄屏布局显示，横屏与平板使用独立的内边距尺寸；WebView 内的网页同样有响应式样式。
+* 地址保存在本机 `SharedPreferences`，下次直接进入；工具栏可刷新、在浏览器中打开、
+  更换服务器或清除站点数据。
+* 支持视频全屏、返回键网页后退、外链跳系统浏览器、网页文件选择器，以及自签名证书确认。
+* 只申请 `INTERNET`，不需要存储权限；不使用 AndroidX 或第三方库。
+
+构建需要 JDK 17、Android SDK 34 和 Gradle 8.7（wrapper 已附带）：
+
+```bash
+cd android
+chmod +x gradlew                 # 仅 Linux/macOS 首次运行
+./gradlew assembleDebug          # Windows: gradlew.bat assembleDebug
+adb install -r app/build/outputs/apk/debug/app-debug.apk
+```
+
+APK 不在仓库内提供，需要用 Android Studio 或本机 SDK 构建；完整步骤、签名与调试说明见
+[`android/README.md`](android/README.md)。
+
+> 手机连接时请填写电脑/NAS 的局域网 IP，不要填 `127.0.0.1`。Docker 镜像默认监听
+> `0.0.0.0:5000`；本地 `go run .` 需要加 `--host 0.0.0.0`。
 
 ---
 
@@ -180,11 +266,12 @@ Vue 前端调用的正是上一版暴露的那套 JSON API，所以每个接口�
 | 方法 | 接口 | 用途 |
 | ---- | ---- | ---- |
 | GET | `/` | SPA 外壳（由 Vue 应用决定显示面板还是选择器） |
-| GET | `/api/state` | 当前课程、课程树、最近课程（含完成计数）、`roots_display`、`needs_mount`/`mount_issue`/`roots_detail`/`mount_hint` 与版本号 |
+| GET | `/api/state` | 当前课程、课程树、最近课程（含完成计数）、`sources`、`roots_display`、`needs_mount`/`mount_issue`/`roots_detail`/`mount_hint` 与版本号 |
 | GET | `/browse?path=<dir>` | 单级目录的 JSON 列表（选择器用） |
 | POST | `/load_course` | `{"course_path": "..."}` —— 解析文件夹并设为当前课程 |
 | GET | `/api/lesson?path=<lesson>&autoplay=1` | 课时数据：媒体/字幕 URL、文档、相邻课时、连播目标、存储告警（非媒体课时打开即标为完成） |
 | GET | `/lesson/<lesson_path>` | 进入 SPA 课时页面的深链接 |
+| GET | `/login` | SPA 连接页：登录时选择 WebDAV / SMB / 目录，或打开已配置的来源 |
 | POST | `/api/progress` | 局部更新：`{"lesson_path", "completed", "progress_seconds"}`（省略的字段保持原值） |
 | GET | `/files/<path>` | 提供当前课程内的文件 |
 | GET | `/api/media/status?path=<lesson>` | 浏览器该如何播放这一节：`{"mode":"direct"\|"hls"\|"remux"\|"raw", "ready", "preparing", "hls_url", "error", "duration"}` —— `hls=0` 表示不要提供 HLS |
@@ -192,7 +279,11 @@ Vue 前端调用的正是上一版暴露的那套 JSON API，所以每个接口�
 | GET | `/api/hls/segment?lesson=<path>&i=3` | 该流的一个分片（MPEG-TS），首次请求时转换并缓存 |
 | GET | `/subtitles/<path>` | 以 WebVTT 提供字幕（即时转换 SRT/SBV/ASS/SSA/SubViewer/MicroDVD） |
 | GET | `/api/preview?path=<doc>` | 把 `.docx`/`.doc`/`.rtf` 转成自带样式的内联 HTML 页（不包含任何脚本），并把 `.mhtml`/`.mht` 网页存档解包成同样的页面 |
-| GET | `/health` | `{"status": "healthy"}`（Docker 健康检查用） |
+| GET | `/health` | `{"status": "healthy"}`（Docker 健康检查与 Android 登录页使用） |
+| GET / POST / PUT | `/api/sources` | 列出 / 添加 / 编辑课程来源（PUT 需带 `id`；密码只写不读，留空保留旧密码） |
+| POST | `/api/sources/test` | 保存前测试连接；已配置的来源可复用服务端保存的密码 |
+| POST | `/api/sources/connect` | 登录：先验证再复用/创建来源，返回 `action: created\|updated\|reused`；`load: true` 可直接把来源根设为课程 |
+| POST | `/api/sources/remove` | `{"id": "..."}` 删除来源；课程文件、进度和最近记录保留 |
 | POST | `/api/reset_course` | 回到选择器；课程仍保留在最近列表里 |
 | POST | `/api/exclude` | `{"path": "<课程相对路径>"}` —— 从课程内容隐藏一个文件课时或整个文件夹（磁盘文件不动） |
 | POST | `/api/restore_excluded` | `{"path": "..."}` 恢复一项、`{"all": true}` 全部恢复 |
@@ -394,6 +485,7 @@ OfflineU/
 ├── main.go                     # 命令行、嵌入前端、HTTP 服务启动
 ├── internal/offlineu/
 │   ├── config.go               # 参数/环境变量、OFFLINEU_ROOTS 白名单、路径工具
+│   ├── sources.go              # 课程来源：WebDAV/SMB/本地目录、虚拟路径、密码存储
 │   ├── model.go                # Course / Lesson / 文件类型表、JSON 序列化
 │   ├── parser.go               # 文件夹 → 课程树、测验识别、文本资源
 │   ├── paths.go                # URL 转义、递归扫描工具
@@ -408,10 +500,14 @@ OfflineU/
 │   ├── castsession.go          # 正在进行的投屏：位置、看门狗、自动续播下一节
 │   ├── server.go               # 路由、JSON API、静态文件与 SPA 回退
 │   └── *_test.go               # Go 测试套件
+├── android/                    # Android WebView 客户端（独立 Gradle 项目）
+│   └── app/src/main/           # 登录页、WebView 外壳、移动端资源
 └── web/                        # Vue 3 + Vite 前端（构建到 web/dist 并被嵌入）
     ├── src/{api.js,store.js,router.js,i18n.js,vditor.js,views,components,composables,styles}
     │                           # i18n.js：en/zh 词典、`t()` 助手、语言切换
     │                           # vditor.js：Markdown → HTML（离线内置的 Vditor）
+    │                           # views/LoginView.vue：登录/连接页（`/login`）
+    │                           # components/SourceForm.vue：登录页与来源面板共用的表单
     ├── scripts/vendor-vditor.js # 把 Vditor 运行时复制进 public/vditor-dist
     └── vite.config.js          # 开发服务器把 API 代理到 :5000
 ```
@@ -459,7 +555,8 @@ git status        # 应当恢复干净
 
 ## 🧪 测试
 
-Go 测试套件只使用标准库，因此完全离线运行：
+Go 测试套件不需要外部服务（进程内的假 WebDAV 服务器代替 NAS），首次运行由 Go 下载
+`go-smb2` 等模块依赖，之后即可完全离线运行：
 
 ```bash
 go test ./... -count=1
@@ -925,7 +1022,9 @@ Mount your own folders when you start the container - nothing has to be rebuilt:
 OfflineU 面向可信的局域网或单机使用：
 
 * 它**默认只绑定 `127.0.0.1`**。只有在确有需要时才暴露出去（`--host 0.0.0.0`）。
-* **没有鉴权。** 任何能访问该端口的人都能浏览范围内的文件夹并下载其中的文件。
+* **没有账号体系，也没有鉴权。** `/login` 与 Android 登录页只是「连接课程来源」：
+  填入的 WebDAV/SMB 凭据属于服务器，不是用户身份。任何能访问该端口的人都能浏览范围内的文件夹、
+  下载其中的文件，并调用 `/api/sources/*` 管理来源。
 * 请设置 **`OFFLINEU_ROOTS`** 指向专门的课程文件夹，以限制可浏览和可提供的范围。
   请求路径会用 `filepath.Rel` **以及**符号链接求值来解析，因此 `..` 穿越和前缀花招
   （例如用 `/courses-ab` 冒充 `/courses`）都会被 `403` 拒绝。
@@ -945,7 +1044,8 @@ OfflineU 面向可信的局域网或单机使用：
 * [ ] 深色/浅色主题切换
 * [ ] 内置测验交互
 * [ ] 课程元数据导入/导出
-* [ ] 移动端外壳
+* [x] 移动端外壳（Android WebView 客户端 + 手机页面适配）
+* [x] 登录时连接 WebDAV / SMB / 本地目录来源
 
 ---
 
@@ -1006,6 +1106,10 @@ Markdown 渲染使用 [Vditor](https://github.com/Vanessa219/vditor) 4.0.0（MIT
 | `OFFLINEU_HWACCEL` | `auto`（默认）在 ffmpeg 支持时使用 GPU —— NVENC、Quick Sync、VAAPI、VideoToolbox、AMF、V4L2 或 RKMPP；`off` 从不使用；或写某个名字强制指定（`nvenc`、`qsv`、`vaapi`、`videotoolbox`、`amf`、`v4l2m2m`、`rkmpp`） |
 | `OFFLINEU_FORCE_REENCODE` | `1` 表示对每一节都重编码，而不是拷贝其流 —— 针对某些平台提供的、带有故意损坏数据包的传输流（`.ts`）：拷贝会保留损坏，浏览器拒绝播放，重编码则会丢弃它们 |
 | `AUTO_LOAD_COURSE` | 未给路径参数时，启动时加载这门课程 |
+
+课程来源（WebDAV / SMB / 本地目录）不通过环境变量配置：在 `/login` 或课程选择器里添加，
+保存在 `StateDir/sources.json`（跟随 `OFFLINEU_PROGRESS_DIR`，Docker 下为 `/app/data`）。
+WebDAV 元数据请求超时 60 秒、SMB 拨号超时 20 秒，自签名证书由来源自身的选项控制。
 
 已配置根目录内的位置都按**你映射进来的文件夹**相对显示（`My Course/Section 1`），
 所以 `/courses`、`/app/courses` 这类容器路径永远不会出现在浏览器、选择器或面板里。

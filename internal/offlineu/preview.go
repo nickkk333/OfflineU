@@ -49,6 +49,33 @@ func PreviewDocument(path string) (title, body string, truncated bool, err error
 	if err != nil {
 		return "", "", false, err
 	}
+	return previewDocumentData(path, data, truncated)
+}
+
+// PreviewDocument is the Config-aware variant: office documents on a WebDAV or
+// SMB source are fetched through the source backend.
+func (c *Config) PreviewDocument(path string) (title, body string, truncated bool, err error) {
+	if !c.IsRemotePath(path) {
+		return PreviewDocument(path)
+	}
+	handle, err := c.OpenPath(path)
+	if err != nil {
+		return "", "", false, err
+	}
+	defer handle.Close()
+	limited := io.LimitReader(handle, int64(maxPreviewBytes)+1)
+	data, err := io.ReadAll(limited)
+	if err != nil {
+		return "", "", false, err
+	}
+	truncated = len(data) > maxPreviewBytes
+	if truncated {
+		data = data[:maxPreviewBytes]
+	}
+	return previewDocumentData(path, data, truncated)
+}
+
+func previewDocumentData(path string, data []byte, truncated bool) (title, body string, wasTruncated bool, err error) {
 	base := CleanLessonName(strings.TrimSuffix(filepath.Base(path), filepath.Ext(path)))
 	switch strings.ToLower(filepath.Ext(path)) {
 	case ".docx":

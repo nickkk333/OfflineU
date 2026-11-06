@@ -28,7 +28,7 @@ WORKDIR /src
 # the version is never typed by hand.
 ARG VERSION=latest
 
-COPY go.mod ./
+COPY go.mod go.sum ./
 COPY main.go ./
 COPY internal/ ./internal/
 # //go:embed all:web/dist needs the bundle at compile time; it comes straight

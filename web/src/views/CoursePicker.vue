@@ -1,6 +1,8 @@
 <script setup>
 import { computed, nextTick, ref, watch } from 'vue'
+import { RouterLink } from 'vue-router'
 import DirectoryBrowser from '../components/DirectoryBrowser.vue'
+import SourceManager from '../components/SourceManager.vue'
 import { forgetCourse, loadCourse, refreshState, store } from '../store.js'
 import { reloadPage } from '../api.js'
 import { t } from '../i18n.js'
@@ -210,6 +212,16 @@ function rootStateLabel(status) {
         </div>
       </div>
     </section>
+
+    <section v-if="!store.sources.length" class="card picker__connect">
+      <div class="section-title">{{ t('login.promptTitle') }}</div>
+      <p class="card__hint">{{ t('login.promptText') }}</p>
+      <RouterLink to="/login" class="btn btn--sm picker__connect-btn">
+        {{ t('login.promptButton') }}
+      </RouterLink>
+    </section>
+
+    <SourceManager />
 
     <section class="card">
       <div class="section-title">{{ t('picker.selectTitle') }}</div>
@@ -539,5 +551,71 @@ function rootStateLabel(status) {
 .confirm-enter-from .confirm,
 .confirm-leave-to .confirm {
   transform: translateY(10px) scale(0.97);
+}
+
+.picker__connect-btn {
+  display: inline-block;
+  margin-top: 14px;
+  text-decoration: none;
+}
+
+@media (max-width: 640px) {
+  .picker {
+    gap: 16px;
+  }
+
+  .picker__connect-btn {
+    width: 100%;
+    text-align: center;
+  }
+
+  .recent__row {
+    flex-wrap: wrap;
+    gap: 10px;
+    padding: 11px 12px;
+  }
+
+  .recent__info {
+    flex-basis: calc(100% - 66px);
+  }
+
+  .recent__progress {
+    order: 3;
+    margin-left: 34px;
+  }
+
+  .recent__row > .btn {
+    flex: 1;
+  }
+
+  .recent__row > .icon-btn {
+    width: 38px;
+    height: 38px;
+  }
+
+  .manual {
+    gap: 10px;
+  }
+
+  .manual .input {
+    min-width: 0;
+  }
+
+  .manual .btn {
+    width: 100%;
+  }
+
+  .grid {
+    grid-template-columns: 1fr;
+    gap: 16px;
+  }
+
+  .notice__code {
+    font-size: 0.72rem;
+  }
+
+  .confirm {
+    padding: 18px;
+  }
 }
 </style>

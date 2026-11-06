@@ -139,6 +139,13 @@ func sortedEntries(dir string) ([]os.DirEntry, error) {
 	if err != nil {
 		return nil, err
 	}
+	sortEntries(entries)
+	return entries, nil
+}
+
+// sortEntries applies the reader-friendly order used by every directory listing
+// (local and remote alike).
+func sortEntries(entries []fs.DirEntry) {
 	sort.SliceStable(entries, func(i, j int) bool {
 		leftDir := entries[i].IsDir()
 		rightDir := entries[j].IsDir()
@@ -147,7 +154,6 @@ func sortedEntries(dir string) ([]os.DirEntry, error) {
 		}
 		return compareNames(entries[i].Name(), entries[j].Name()) < 0
 	})
-	return entries, nil
 }
 
 // compareNames orders two names the way a reader expects: case insensitively,

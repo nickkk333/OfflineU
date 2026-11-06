@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Mirrors the dark palette of the embedded Vue frontend. -->
+    <color name="bg">#070B16</color>
+    <color name="bg_soft">#0D1424</color>
+    <color name="surface">#111A2E</color>
+    <color name="border">#1E293B</color>
+    <color name="accent">#6366F1</color>
+    <color name="text">#E8ECF6</color>
+    <color name="text_muted">#94A3B8</color>
+    <color name="text_faint">#64748B</color>
+    <color name="danger">#F87171</color>
+    <color name="launcher_bg">#070B16</color>
+</resources>

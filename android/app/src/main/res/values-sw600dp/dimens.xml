@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Tablets: keep the form from stretching across the whole screen. -->
+    <dimen name="login_padding_top">64dp</dimen>
+    <dimen name="login_padding_horizontal">96dp</dimen>
+    <dimen name="login_padding_bottom">48dp</dimen>
+</resources>

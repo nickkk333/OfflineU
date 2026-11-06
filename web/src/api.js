@@ -86,7 +86,19 @@ export const api = {
       })
     }),
   // Where the TV currently is - the browser polls this to follow the cast.
-  castSession: () => request('/api/dlna/session')
+  castSession: () => request('/api/dlna/session'),
+  // Course sources: WebDAV / SMB servers and additional local folders that can
+  // be browsed and loaded exactly like a mapped folder. Passwords are write-only:
+  // the API only reports whether one is stored.
+  sources: () => request('/api/sources'),
+  addSource: (source) => request('/api/sources', { method: 'POST', body: JSON.stringify(source) }),
+  updateSource: (source) => request('/api/sources', { method: 'PUT', body: JSON.stringify(source) }),
+  // The login flow: verify, reuse/create the source and optionally open its
+  // root as the active course in one request.
+  connectSource: (source, load = false) =>
+    request('/api/sources/connect', { method: 'POST', body: JSON.stringify({ ...source, load }) }),
+  testSource: (source) => request('/api/sources/test', { method: 'POST', body: JSON.stringify(source) }),
+  removeSource: (id) => request('/api/sources/remove', { method: 'POST', body: JSON.stringify({ id }) })
 }
 
 // Builds the SPA route of a lesson ("Section 1/01 - Intro.mp4/Intro").

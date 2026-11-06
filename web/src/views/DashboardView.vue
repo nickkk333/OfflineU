@@ -490,4 +490,73 @@ async function restoreAll() {
     width: 100%;
   }
 }
+
+@media (max-width: 640px) {
+  .dash {
+    gap: 16px;
+  }
+
+  .dash__header {
+    align-items: flex-start;
+    gap: 12px;
+    padding: 16px;
+  }
+
+  .dash__title {
+    flex-basis: 100%;
+  }
+
+  .dash__icon {
+    width: 40px;
+    height: 40px;
+    border-radius: 12px;
+  }
+
+  .dash__title h2 {
+    font-size: 1.12rem;
+    overflow-wrap: anywhere;
+  }
+
+  .dash__header .row {
+    width: 100%;
+  }
+
+  .dash__header .row .btn {
+    flex: 1;
+  }
+
+  .dash__percent {
+    font-size: 2.2rem;
+  }
+
+  .dash__resume .btn {
+    align-self: stretch;
+  }
+
+  .dash__tree-head {
+    gap: 8px;
+  }
+
+  .dash__tree-head .section-title {
+    flex-basis: 100%;
+  }
+
+  .excluded__head {
+    flex-wrap: wrap;
+  }
+
+  .excluded__item {
+    flex-wrap: wrap;
+  }
+
+  .excluded__path {
+    flex-basis: 100%;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+
+  .excluded__item .btn {
+    margin-left: auto;
+  }
+}
 </style>

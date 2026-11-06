@@ -153,6 +153,10 @@ type Config struct {
 	CacheDir    string   // OFFLINEU_CACHE_DIR ("" keeps the system temp directory)
 	CacheLimit  int64    // OFFLINEU_CACHE_LIMIT_GB in bytes (0 = default, <0 = unlimited)
 	Transcode   TranscodeOptions
+	// Sources holds WebDAV / SMB / local folders configured from the UI. It is
+	// created by ConfigFromEnv and NewApp; hand-built Config values get it
+	// lazily through ensureSources.
+	Sources *SourceRegistry
 }
 
 // transcodeSettings reads how a lesson that has to be re-encoded is scaled and
@@ -215,6 +219,8 @@ func ConfigFromEnv() Config {
 		// folder a shortcut happened to be started from.
 		cfg.StateDir = filepath.Join(dir, "data")
 	}
+	cfg.Sources = NewSourceRegistry(cfg.SourcesFile())
+	cfg.Sources.SetLocalRoots(cfg.Roots)
 	return cfg
 }
 
@@ -251,6 +257,9 @@ func (c *Config) RefreshRoots() {
 		if dir, ok := PortableDir(); ok {
 			c.Roots = ParseRoots(dir)
 		}
+	}
+	if c.Sources != nil {
+		c.Sources.SetLocalRoots(c.Roots)
 	}
 }
 
@@ -298,14 +307,35 @@ func deriveStateDir(progressDir string) string {
 // it into a central, writable folder (used by the Docker image so that course
 // mounts can stay read-only).
 func (c *Config) ProgressFileFor(coursePath string) string {
+	if c.IsRemotePath(coursePath) {
+		// A virtual source path has no writable "next to the course" folder.
+		return filepath.Join(c.bookkeepingDir(), sha1Key(coursePath)+"_progress.json")
+	}
 	if strings.TrimSpace(c.ProgressDir) == "" {
 		return filepath.Join(coursePath, ProgressFilename)
 	}
-	key := sha1Hex(coursePath)
+	return filepath.Join(ExpandHome(c.ProgressDir), sha1Key(coursePath)+"_progress.json")
+}
+
+// bookkeepingDir is the writable folder used for virtual source paths: the
+// configured progress directory, or the state directory (which already holds
+// the course list and the source passwords).
+func (c *Config) bookkeepingDir() string {
+	if strings.TrimSpace(c.ProgressDir) != "" {
+		return ExpandHome(c.ProgressDir)
+	}
+	if strings.TrimSpace(c.StateDir) != "" {
+		return ExpandHome(c.StateDir)
+	}
+	return deriveStateDir("")
+}
+
+func sha1Key(value string) string {
+	key := sha1Hex(value)
 	if len(key) > 12 {
 		key = key[:12]
 	}
-	return filepath.Join(ExpandHome(c.ProgressDir), key+"_progress.json")
+	return key
 }
 
 // StateFile returns the path of the course bookkeeping file.
@@ -317,7 +347,12 @@ func (c *Config) StateFile() string {
 }
 
 // InsideRoots reports whether path is allowed by the configured allow-list.
+// Source paths are always allowed: their own resolver keeps them inside the
+// configured source.
 func (c *Config) InsideRoots(path string) bool {
+	if c.IsRemotePath(path) {
+		return true
+	}
 	if len(c.Roots) == 0 {
 		return true
 	}
@@ -336,7 +371,13 @@ func (c *Config) InsideRoots(path string) bool {
 // "/courses" never leak into the browser. Without an allow-list (local use) the
 // absolute path is returned unchanged.
 func (c *Config) DisplayPath(value string) string {
-	if strings.TrimSpace(value) == "" || len(c.Roots) == 0 {
+	if strings.TrimSpace(value) == "" {
+		return value
+	}
+	if display, ok := c.SourceDisplayPath(value); ok {
+		return display
+	}
+	if len(c.Roots) == 0 {
 		return value
 	}
 	for _, root := range c.Roots {
@@ -570,6 +611,11 @@ func classifyMount(path string) (kind string, detail string, known bool) {
 // MountIssue summarises the whole mount situation: it is the value the picker
 // turns into an accurate message.
 func (c *Config) MountIssue() MountIssue {
+	if len(c.SourceInfos()) > 0 {
+		// At least one WebDAV/SMB/local source is configured in the UI, so the
+		// picker has something to show even when no folder is mapped.
+		return MountIssueNone
+	}
 	if len(c.Roots) == 0 {
 		return MountIssueNoRoots
 	}

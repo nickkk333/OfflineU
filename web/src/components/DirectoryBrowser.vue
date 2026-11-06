@@ -27,6 +27,14 @@ const rootLinks = computed(() =>
     .filter((root) => root.label !== (currentDisplay.value || currentPath.value))
 )
 
+// Configured WebDAV / SMB / local sources are one-click shortcuts too. They
+// live in a separate row because they are not mounted folders.
+const sourceLinks = computed(() =>
+  store.sources
+    .map((source) => ({ path: source.root, label: source.name, kind: source.kind }))
+    .filter((source) => source.path && source.label !== (currentDisplay.value || currentPath.value))
+)
+
 // An empty listing means something different depending on the mapping state:
 // "nothing is mounted" and "mapped, but the folder is empty" must not read the
 // same, so the message follows what the server reported about the folder.
@@ -92,6 +100,17 @@ onMounted(() => navigate(''))
           @click="navigate(root.path)"
         >
           {{ root.label }}
+        </button>
+      </template>
+      <template v-for="source in sourceLinks" :key="source.path">
+        <span class="browser__divider" aria-hidden="true"></span>
+        <button
+          type="button"
+          class="browser__root browser__root--source mono"
+          :title="t('sources.openSource', { name: source.label })"
+          @click="navigate(source.path)"
+        >
+          🔗 {{ source.label }}
         </button>
       </template>
       <span class="browser__path mono">{{ currentDisplay || currentPath || t('common.loading') }}</span>
@@ -249,5 +268,54 @@ onMounted(() => navigate(''))
   gap: 14px;
   padding: 13px 14px;
   flex-wrap: wrap;
+}
+
+@media (max-width: 640px) {
+  .browser__bar {
+    gap: 8px;
+    padding: 10px 11px;
+  }
+
+  /* The breadcrumb gets its own line: on a phone the toolbar buttons and the
+     source shortcuts already fill the first one. */
+  .browser__path {
+    flex-basis: 100%;
+    order: 20;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .browser__root {
+    max-width: 46vw;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .browser__divider {
+    display: none;
+  }
+
+  .browser__list {
+    max-height: 46vh;
+  }
+
+  .dir {
+    flex-wrap: wrap;
+    padding: 10px 12px;
+  }
+
+  .dir__open {
+    flex-basis: calc(100% - 8px);
+  }
+
+  .dir > .btn {
+    margin-left: auto;
+  }
+
+  .browser__actions .btn {
+    flex: 1;
+  }
 }
 </style>

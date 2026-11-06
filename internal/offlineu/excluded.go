@@ -29,6 +29,9 @@ type exclusionFile struct {
 // ExcludedFileFor returns the JSON file that stores the exclusions of a
 // course, mirroring ProgressFileFor so both live in the same place.
 func (c *Config) ExcludedFileFor(coursePath string) string {
+	if c.IsRemotePath(coursePath) {
+		return filepath.Join(c.bookkeepingDir(), excludedKey(coursePath)+"_excluded.json")
+	}
 	if strings.TrimSpace(c.ProgressDir) == "" {
 		return filepath.Join(coursePath, ExcludedFilename)
 	}

@@ -54,4 +54,16 @@ const label = computed(() => `${(props.percentage || 0).toFixed(1)}%`)
   color: transparent;
   font-size: 1rem;
 }
+
+@media (max-width: 480px) {
+  .progress-block__meta {
+    flex-wrap: wrap;
+    gap: 4px;
+    font-size: 0.82rem;
+  }
+
+  .progress-block__percent {
+    font-size: 0.9rem;
+  }
+}
 </style>

@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Order is fixed: LoginActivity maps these positions to source kinds.
+         The labels follow the device locale through values-zh/strings.xml. -->
+    <string-array name="login_source_kinds">
+        <item>@string/login_source_none</item>
+        <item>@string/login_source_webdav</item>
+        <item>@string/login_source_smb</item>
+        <item>@string/login_source_local</item>
+    </string-array>
+</resources>

@@ -1,0 +1,67 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">OfflineU</string>
+
+    <!-- 登录 -->
+    <string name="login_tagline">你的课程，随手可及。</string>
+    <string name="login_heading">连接你的服务器</string>
+    <string name="login_description">输入 OfflineU 服务器地址。手机需要能通过 Wi-Fi 或互联网访问它。</string>
+    <string name="login_server_label">服务器地址</string>
+    <string name="login_server_hint">http://192.168.1.10:5000</string>
+    <string name="login_server_help">填写运行 OfflineU 的电脑、NAS 或 Docker 主机的局域网地址。在手机上，127.0.0.1 指向手机自己。</string>
+    <string name="login_connect">连接</string>
+    <string name="login_checking">正在检查服务器…</string>
+    <string name="login_invalid_url">请输入有效的 http:// 或 https:// 地址，例如 http://192.168.1.10:5000。</string>
+    <string name="login_http_error">服务器返回 HTTP %1$d。</string>
+    <string name="login_not_offlineu">该地址有响应，但看起来不是 OfflineU 服务器。</string>
+    <string name="login_save_anyway_title">无法验证服务器</string>
+    <string name="login_save_anyway_message">无法验证 %1$s：\n\n%2$s\n\n如果服务器正在启动，或健康检查被拦截，你仍然可以打开它。</string>
+    <string name="login_open_anyway">仍然打开</string>
+
+    <!-- 登录时填写课程来源 -->
+    <string name="login_source_label">课程来源（可选）</string>
+    <string name="login_source_help">可以直接登录 WebDAV 服务器、SMB 共享或服务器上的文件夹。凭据保存在服务器，不保存在手机。</string>
+    <string name="login_source_none">使用服务器上已配置的来源</string>
+    <string name="login_source_webdav">WebDAV</string>
+    <string name="login_source_smb">SMB / Windows 共享</string>
+    <string name="login_source_local">服务器本地文件夹</string>
+    <string name="login_source_url_hint">https://nas.local:5006/dav/courses</string>
+    <string name="login_source_user_hint">用户名</string>
+    <string name="login_source_password_hint">密码</string>
+    <string name="login_source_host_hint">服务器（IP 或名称）</string>
+    <string name="login_source_share_hint">共享名</string>
+    <string name="login_source_base_hint">共享内文件夹（可选）</string>
+    <string name="login_source_path_hint">/mnt/courses</string>
+    <string name="login_source_incomplete">请先填写来源地址、主机/共享名或文件夹路径，或选择“使用服务器上已配置的来源”。</string>
+    <string name="login_source_connecting">正在连接课程来源…</string>
+    <string name="login_source_failed_title">课程来源未添加</string>
+    <string name="login_source_failed_message">%1$s\n\n仍然可以打开服务器，之后在网页里添加来源。</string>
+    <string name="login_open_without_source">不添加来源，直接打开</string>
+
+    <!-- 工具栏菜单 -->
+    <string name="menu_reload">刷新</string>
+    <string name="menu_open_browser">在浏览器中打开</string>
+    <string name="menu_change_server">更换服务器</string>
+    <string name="menu_clear_data">清除站点数据</string>
+
+    <!-- 主界面 -->
+    <string name="main_error_title">无法连接服务器</string>
+    <string name="main_error_message">OfflineU 无法加载 %1$s。\n\n请确认服务器正在运行，并且手机与它处于同一网络。</string>
+    <string name="main_error_retry">重试</string>
+    <string name="main_error_change_server">更换服务器</string>
+    <string name="external_opened">已在浏览器中打开</string>
+    <string name="no_app_for_link">没有可以打开此链接的应用。</string>
+    <string name="back_again_to_exit">再按一次退出</string>
+    <string name="ssl_title">证书不受信任</string>
+    <string name="ssl_message">%1$s 提供的证书不受此手机信任。\n\n仅当你信任这台服务器（例如使用自签名证书的 NAS）时才继续。</string>
+    <string name="ssl_continue">继续</string>
+    <string name="file_chooser_title">选择文件</string>
+
+    <!-- 清除站点数据 -->
+    <string name="clear_data_title">清除站点数据？</string>
+    <string name="clear_data_message">这会清除 OfflineU 的 WebView 缓存、Cookie 和浏览历史。服务器上的学习进度不受影响。</string>
+    <string name="clear_data_confirm">清除</string>
+    <string name="clear_data_done">站点数据已清除</string>
+
+    <string name="cancel">取消</string>
+</resources>

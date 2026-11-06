@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Landscape phones: less vertical padding, more side margin. -->
+    <dimen name="login_padding_top">24dp</dimen>
+    <dimen name="login_padding_horizontal">48dp</dimen>
+    <dimen name="login_padding_bottom">32dp</dimen>
+</resources>

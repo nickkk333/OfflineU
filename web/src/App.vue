@@ -16,7 +16,7 @@ import ToastStack from './components/ToastStack.vue'
 <style scoped>
 .app {
   min-height: 100vh;
-  padding-bottom: 60px;
+  padding-bottom: calc(60px + env(safe-area-inset-bottom, 0px));
 }
 
 .view-enter-active,

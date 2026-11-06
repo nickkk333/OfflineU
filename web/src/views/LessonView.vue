@@ -1398,6 +1398,133 @@ onBeforeUnmount(() => {
 .shortcuts {
   text-align: center;
 }
+
+@media (max-width: 640px) {
+  .lesson-view {
+    padding-top: max(12px, env(safe-area-inset-top, 0px));
+    gap: 14px;
+  }
+
+  .lesson-view__bar {
+    gap: 8px;
+  }
+
+  .lesson-view__bar .btn {
+    padding: 8px 11px;
+  }
+
+  /* The position badge, cast and language buttons share the second line. */
+  .lesson-view__bar .spacer {
+    display: none;
+  }
+
+  .lesson-view__head {
+    padding: 16px;
+  }
+
+  .lesson-view__head h1 {
+    font-size: 1.2rem;
+    overflow-wrap: anywhere;
+  }
+
+  .lesson-view__meta {
+    gap: 8px;
+  }
+
+  .lesson-view__meta .mono {
+    flex-basis: 100%;
+  }
+
+  .lesson-view__player {
+    padding: 12px;
+  }
+
+  .player-toolbar {
+    gap: 10px;
+    padding-bottom: 12px;
+    margin-bottom: 12px;
+  }
+
+  .player {
+    border-radius: 12px;
+  }
+
+  .resource__frame {
+    min-height: 300px;
+    height: 62vh;
+  }
+
+  .resource__head {
+    align-items: flex-start;
+  }
+
+  .resource__actions {
+    margin-left: 0;
+    width: 100%;
+  }
+
+  .resource__rich {
+    padding: 15px;
+    max-height: 62vh;
+  }
+
+  .resource__text {
+    padding: 14px;
+    max-height: 62vh;
+  }
+
+  .image-lesson__figure {
+    max-height: 60vh;
+    padding: 8px;
+  }
+
+  .toolbar--sub .spacer {
+    display: none;
+  }
+
+  .image-lesson--fullscreen,
+  .resource__framewrap--fullscreen {
+    padding: 8px;
+  }
+
+  .lesson-view__nav {
+    gap: 8px;
+  }
+
+  .lesson-view__nav .btn {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .banner {
+    padding: 12px 14px;
+  }
+}
+
+@media (max-width: 480px) {
+  .lesson-view__bar {
+    flex-wrap: wrap;
+  }
+
+  .lesson-view__bar .btn {
+    padding: 8px 9px;
+    font-size: 0.8rem;
+  }
+
+  .lesson-view__meta {
+    font-size: 0.78rem;
+  }
+
+  /* Leave more of a small screen to the lesson itself. */
+  .resource__frame {
+    height: 56vh;
+  }
+
+  .resource__rich,
+  .resource__text {
+    max-height: 56vh;
+  }
+}
 </style>
 
 

@@ -31,4 +31,11 @@ function switchLanguage() {
   gap: 7px;
   flex: none;
 }
+
+@media (max-width: 480px) {
+  .lang {
+    padding: 8px 10px;
+    min-height: 44px;
+  }
+}
 </style>

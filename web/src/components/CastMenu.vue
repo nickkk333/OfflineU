@@ -416,4 +416,26 @@ onBeforeUnmount(() => {
   font-weight: 600;
   color: var(--accent-3);
 }
+
+@media (max-width: 640px) {
+  /* The panel is anchored to a button in the lesson toolbar; on a phone a
+     viewport-wide sheet is easier to reach than a 78vw popover. */
+  .cast__panel {
+    position: fixed;
+    top: max(64px, calc(env(safe-area-inset-top, 0px) + 56px));
+    left: 12px;
+    right: 12px;
+    width: auto;
+    max-height: calc(100dvh - 88px);
+    overflow: auto;
+  }
+
+  .cast__list {
+    max-height: 40dvh;
+  }
+
+  .cast__active .btn {
+    flex: 1;
+  }
+}
 </style>

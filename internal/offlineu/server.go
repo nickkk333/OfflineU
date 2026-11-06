@@ -42,6 +42,7 @@ type App struct {
 
 // NewApp builds an application from a configuration.
 func NewApp(cfg Config) *App {
+	cfg.ensureSources()
 	store := NewCourseStore(&cfg)
 	return &App{
 		Config:     &cfg,
@@ -76,6 +77,14 @@ func (a *App) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case requestPath == "/health":
 		a.handleHealth(w, r)
+	case requestPath == "/api/sources":
+		a.handleSources(w, r)
+	case requestPath == "/api/sources/test":
+		a.handleSourceTest(w, r)
+	case requestPath == "/api/sources/connect":
+		a.handleSourceConnect(w, r)
+	case requestPath == "/api/sources/remove":
+		a.handleSourceRemove(w, r)
 	case requestPath == "/browse" || requestPath == "/api/browse":
 		a.handleBrowse(w, r)
 	case requestPath == "/load_course" || requestPath == "/api/load_course":
@@ -191,6 +200,129 @@ func (a *App) handleHealth(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "healthy"})
 }
 
+// handleSources lists the configured WebDAV/SMB/local sources (GET), adds a
+// new one (POST) or edits one in place (PUT). Passwords are write-only: the API
+// never returns them.
+func (a *App) handleSources(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		writeJSON(w, http.StatusOK, map[string]any{"sources": a.Config.SourceInfos()})
+	case http.MethodPost:
+		a.Config.RefreshRoots()
+		var source Source
+		if err := decodeJSON(r, &source); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid source")
+			return
+		}
+		source.ID = "" // ids are assigned by the server
+		info, err := a.Config.Sources.Add(source)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"success": true, "source": info})
+	case http.MethodPut:
+		a.Config.RefreshRoots()
+		var source Source
+		if err := decodeJSON(r, &source); err != nil || strings.TrimSpace(source.ID) == "" {
+			writeError(w, http.StatusBadRequest, "invalid source: id is required")
+			return
+		}
+		info, err := a.Config.Sources.Update(source)
+		if err != nil {
+			status := http.StatusBadRequest
+			if errors.Is(err, ErrSourceNotFound) {
+				status = http.StatusNotFound
+			}
+			writeError(w, status, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"success": true, "source": info})
+	default:
+		w.Header().Set("Allow", "GET, POST, PUT")
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+	}
+}
+
+// handleSourceConnect is the login endpoint. The web login page and the
+// Android app post the WebDAV / SMB / local-folder details here; the connection
+// is checked before anything is stored, a source pointing at the same place is
+// reused instead of duplicated, and `load` optionally opens its root as the
+// active course straight away.
+func (a *App) handleSourceConnect(w http.ResponseWriter, r *http.Request) {
+	if !requireMethod(w, r, http.MethodPost) {
+		return
+	}
+	a.Config.RefreshRoots()
+	var payload struct {
+		Source
+		Load bool `json:"load"`
+	}
+	if err := decodeJSON(r, &payload); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid source")
+		return
+	}
+	info, action, err := a.Config.Sources.Connect(payload.Source)
+	if err != nil {
+		status := http.StatusBadGateway
+		var invalid sourceValidationError
+		if errors.As(err, &invalid) {
+			status = http.StatusBadRequest
+		}
+		writeError(w, status, err.Error())
+		return
+	}
+	result := map[string]any{"success": true, "source": info, "action": action}
+	if payload.Load {
+		course, status, err := a.loadCoursePath(SourceRoot(info.ID))
+		if err != nil {
+			writeError(w, status, err.Error())
+			return
+		}
+		result["course_name"] = course.Name
+		result["course"] = a.summaryFor(course)
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+
+// handleSourceTest connects to a source before it is saved (or re-tests one
+// that is already configured, reusing its stored password).
+func (a *App) handleSourceTest(w http.ResponseWriter, r *http.Request) {
+	if !requireMethod(w, r, http.MethodPost) {
+		return
+	}
+	var source Source
+	if err := decodeJSON(r, &source); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid source")
+		return
+	}
+	if err := a.Config.Sources.Test(source); err != nil {
+		writeError(w, http.StatusBadGateway, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"success": true, "ok": true})
+}
+
+// handleSourceRemove deletes a source from the configuration. Course files,
+// progress and recent-course entries are left alone.
+func (a *App) handleSourceRemove(w http.ResponseWriter, r *http.Request) {
+	if !requireMethod(w, r, http.MethodPost) {
+		return
+	}
+	var payload struct {
+		ID string `json:"id"`
+	}
+	if err := decodeJSON(r, &payload); err != nil || strings.TrimSpace(payload.ID) == "" {
+		writeError(w, http.StatusBadRequest, "id is required")
+		return
+	}
+	if err := a.Config.Sources.Remove(strings.TrimSpace(payload.ID)); err != nil {
+		writeError(w, http.StatusNotFound, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"success": true})
+}
+
 type courseSummary struct {
 	Name         string `json:"name"`
 	Path         string `json:"path"`
@@ -235,6 +367,7 @@ func (a *App) handleState(w http.ResponseWriter, r *http.Request) {
 			"roots_detail":    a.Config.RootStatuses(),
 			"mount_hint":      MountHintFor(requestLanguage(r)),
 			"dlna_enabled":    a.Config.DLNAEnabled,
+			"sources":         a.Config.SourceInfos(),
 		})
 		return
 	}
@@ -256,6 +389,7 @@ func (a *App) handleState(w http.ResponseWriter, r *http.Request) {
 		"roots_detail":    a.Config.RootStatuses(),
 		"mount_hint":      MountHintFor(requestLanguage(r)),
 		"dlna_enabled":    a.Config.DLNAEnabled,
+		"sources":         a.Config.SourceInfos(),
 	})
 }
 
@@ -317,6 +451,7 @@ type browsePayload struct {
 	Directories    []browseEntry `json:"directories"`
 	Roots          []string      `json:"roots"`
 	RootsDisplay   []string      `json:"roots_display,omitempty"`
+	Sources        []SourceInfo  `json:"sources,omitempty"`
 }
 
 // handleBrowse is the JSON directory browser used by the course picker.
@@ -326,10 +461,15 @@ func (a *App) handleBrowse(w http.ResponseWriter, r *http.Request) {
 	}
 	roots := a.Config.Roots
 	requested := strings.TrimSpace(r.URL.Query().Get("path"))
+	sources := a.Config.SourceInfos()
 
 	if requested == "" {
 		if len(roots) > 0 {
 			a.writeBrowse(w, roots[0], roots)
+			return
+		}
+		if len(sources) > 0 {
+			a.writeBrowse(w, sources[0].Root, roots)
 			return
 		}
 		if runtime.GOOS == "windows" {
@@ -337,6 +477,7 @@ func (a *App) handleBrowse(w http.ResponseWriter, r *http.Request) {
 				CurrentPath: "Select a Drive",
 				Directories: windowsDrives(),
 				Roots:       []string{},
+				Sources:     sources,
 			})
 			return
 		}
@@ -354,7 +495,7 @@ func (a *App) handleBrowse(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusForbidden, "this path is outside the configured OFFLINEU_ROOTS")
 		return
 	}
-	info, err := os.Stat(current)
+	info, err := a.Config.StatPath(current)
 	if err != nil || !info.IsDir() {
 		writeError(w, http.StatusNotFound, "not a directory: "+current)
 		return
@@ -363,7 +504,7 @@ func (a *App) handleBrowse(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) writeBrowse(w http.ResponseWriter, current string, roots []string) {
-	entries, err := sortedEntries(current)
+	entries, err := a.Config.sortedEntries(current)
 	if err != nil {
 		writeError(w, http.StatusForbidden, "access denied to "+current+": "+err.Error())
 		return
@@ -379,7 +520,7 @@ func (a *App) writeBrowse(w http.ResponseWriter, current string, roots []string)
 		}
 		full := filepath.Join(current, entry.Name())
 		display := a.Config.DisplayPath(full)
-		media, err := countMediaFiles(full, MaxMediaScanEntries)
+		media, err := a.Config.sourceCountMediaFiles(full, MaxMediaScanEntries)
 		if err != nil {
 			directories = append(directories, browseEntry{
 				Name:        entry.Name() + " (access denied)",
@@ -399,8 +540,7 @@ func (a *App) writeBrowse(w http.ResponseWriter, current string, roots []string)
 
 	var parent *string
 	parentDisplay := ""
-	parentPath := filepath.Dir(current)
-	if filepath.Clean(parentPath) != filepath.Clean(current) && a.Config.InsideRoots(parentPath) {
+	if parentPath, ok := a.Config.ParentPath(current); ok {
 		value := parentPath
 		parent = &value
 		parentDisplay = a.Config.DisplayPath(parentPath)
@@ -414,6 +554,7 @@ func (a *App) writeBrowse(w http.ResponseWriter, current string, roots []string)
 		Directories:    directories,
 		Roots:          roots,
 		RootsDisplay:   a.Config.RootDisplays(),
+		Sources:        a.Config.SourceInfos(),
 	})
 }
 
@@ -441,34 +582,44 @@ func (a *App) handleLoadCourse(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid course path")
 		return
 	}
-	coursePath := strings.TrimSpace(payload.CoursePath)
-	if coursePath == "" {
-		writeError(w, http.StatusBadRequest, "invalid course path")
-		return
-	}
-
-	candidate := filepath.Clean(ExpandHome(coursePath))
-	info, err := os.Stat(candidate)
-	if err != nil || !info.IsDir() {
-		writeError(w, http.StatusBadRequest, "directory not found: "+coursePath)
-		return
-	}
-	if !a.Config.InsideRoots(candidate) {
-		writeError(w, http.StatusForbidden, "this path is outside the configured OFFLINEU_ROOTS")
-		return
-	}
-
-	course, err := a.Config.ScanCourse(candidate)
+	course, status, err := a.loadCoursePath(payload.CoursePath)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeError(w, status, err.Error())
 		return
 	}
-	a.Store.Set(course)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"success":     true,
 		"course_name": course.Name,
 		"course":      a.summaryFor(course),
 	})
+}
+
+// loadCoursePath parses a folder and makes it the active course. Shared by
+// /load_course and the login endpoint so both validate paths the same way.
+func (a *App) loadCoursePath(raw string) (*Course, int, error) {
+	coursePath := strings.TrimSpace(raw)
+	if coursePath == "" {
+		return nil, http.StatusBadRequest, errors.New("invalid course path")
+	}
+	candidate := filepath.Clean(ExpandHome(coursePath))
+	if a.Config.IsRemotePath(candidate) {
+		candidate = filepath.Clean(coursePath)
+	} else if absolute, err := filepath.Abs(candidate); err == nil {
+		candidate = absolute
+	}
+	info, err := a.Config.StatPath(candidate)
+	if err != nil || !info.IsDir() {
+		return nil, http.StatusBadRequest, errors.New("directory not found: " + coursePath)
+	}
+	if !a.Config.InsideRoots(candidate) {
+		return nil, http.StatusForbidden, errors.New("this path is outside the configured OFFLINEU_ROOTS")
+	}
+	course, err := a.Config.ScanCourse(candidate)
+	if err != nil {
+		return nil, http.StatusInternalServerError, err
+	}
+	a.Store.Set(course)
+	return course, http.StatusOK, nil
 }
 
 type lessonPayload struct {
@@ -740,11 +891,11 @@ func (a *App) exclusionTargetExists(course *Course, relative string) bool {
 	if FindLessonInTree(course.Root, relative) != nil {
 		return true
 	}
-	full, ok := ResolveInside(course.Path, relative)
+	full, ok := a.Config.ResolveCoursePath(course.Path, relative)
 	if !ok {
 		return false
 	}
-	info, err := os.Stat(full)
+	info, err := a.Config.StatPath(full)
 	if err != nil || !info.IsDir() {
 		return false
 	}
@@ -822,13 +973,17 @@ func (a *App) forgetCourse(raw string) {
 	if coursePath == "" {
 		return
 	}
-	if absolute, err := filepath.Abs(ExpandHome(coursePath)); err == nil {
-		coursePath = absolute
+	if a.Config.IsRemotePath(coursePath) {
+		coursePath = filepath.Clean(coursePath)
+	} else {
+		if absolute, err := filepath.Abs(ExpandHome(coursePath)); err == nil {
+			coursePath = absolute
+		}
+		if resolved, err := filepath.EvalSymlinks(coursePath); err == nil {
+			coursePath = resolved
+		}
+		coursePath = filepath.Clean(coursePath)
 	}
-	if resolved, err := filepath.EvalSymlinks(coursePath); err == nil {
-		coursePath = resolved
-	}
-	coursePath = filepath.Clean(coursePath)
 
 	// The recent list entry goes first: forgetting must work even when the
 	// folder sits outside OFFLINEU_ROOTS (it simply stops being offered).
@@ -984,7 +1139,7 @@ func (a *App) castDuration(course *Course, lesson *Lesson, fromBrowser float64) 
 // mediaDuration asks ffprobe (or ffmpeg) how long a file plays; 0 means
 // "unknown".
 func (a *App) mediaDuration(file string) float64 {
-	if file == "" || !a.Transcoder.Available() {
+	if file == "" || a.Config.IsRemotePath(file) || !a.Transcoder.Available() {
 		return 0
 	}
 	ctx, cancel := probeContext()
@@ -1035,6 +1190,12 @@ func (a *App) castTarget(baseURL string, course *Course, lesson *Lesson, mode st
 		title = BaseName(relative)
 	}
 	file := a.mediaFileFor(course, lesson)
+	if a.Config.IsRemotePath(file) {
+		// Remote sources are served byte-for-byte: ffprobe/ffmpeg cannot read
+		// the virtual path, and copying a whole lesson to the cache first is not
+		// what "cast this now" should mean.
+		mode = "off"
+	}
 	// Subtitles travel as a separate URL the renderer fetches on its own, so they
 	// are attached no matter whether the video itself is transcoded or handed over
 	// as a plain file. The ?raw=1 makes the server return the subtitle verbatim
@@ -1112,11 +1273,11 @@ func (a *App) mediaFileFor(course *Course, lesson *Lesson) string {
 	if relative == "" {
 		return ""
 	}
-	full, ok := ResolveInside(course.Path, relative)
+	full, ok := a.Config.ResolveCoursePath(course.Path, relative)
 	if !ok || !a.Config.InsideRoots(full) {
 		return ""
 	}
-	if info, err := os.Stat(full); err != nil || info.IsDir() {
+	if info, err := a.Config.StatPath(full); err != nil || info.IsDir() {
 		return ""
 	}
 	return full
@@ -1129,7 +1290,7 @@ func (a *App) castPlanFor(ctx context.Context, course *Course, lesson *Lesson) C
 		return CastPlan{}
 	}
 	file := a.mediaFileFor(course, lesson)
-	if file == "" {
+	if file == "" || a.Config.IsRemotePath(file) {
 		return CastPlan{}
 	}
 	return a.Transcoder.Plan(ctx, file)
@@ -1161,6 +1322,10 @@ func (a *App) handleDLNAStream(w http.ResponseWriter, r *http.Request) {
 	file := a.mediaFileFor(course, lesson)
 	if file == "" {
 		writeError(w, http.StatusNotFound, "this lesson has no media to stream")
+		return
+	}
+	if a.Config.IsRemotePath(file) {
+		writeError(w, http.StatusNotImplemented, "remote source files are cast directly; conversion is not available")
 		return
 	}
 	if !a.Transcoder.Available() {
@@ -1322,7 +1487,7 @@ func (a *App) resolveCourseFile(w http.ResponseWriter, r *http.Request, prefix s
 		http.Error(w, "Access denied", http.StatusForbidden)
 		return "", false
 	}
-	full, ok := ResolveInside(course.Path, relative)
+	full, ok := a.Config.ResolveCoursePath(course.Path, relative)
 	if !ok {
 		http.Error(w, "Access denied", http.StatusForbidden)
 		return "", false
@@ -1331,7 +1496,7 @@ func (a *App) resolveCourseFile(w http.ResponseWriter, r *http.Request, prefix s
 		http.Error(w, "Access denied", http.StatusForbidden)
 		return "", false
 	}
-	info, err := os.Stat(full)
+	info, err := a.Config.StatPath(full)
 	if err != nil || info.IsDir() {
 		http.Error(w, "File not found", http.StatusNotFound)
 		return "", false
@@ -1356,12 +1521,12 @@ func (a *App) handlePreview(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Missing path", http.StatusBadRequest)
 		return
 	}
-	full, ok := ResolveInside(course.Path, relative)
+	full, ok := a.Config.ResolveCoursePath(course.Path, relative)
 	if !ok || !a.Config.InsideRoots(full) {
 		http.Error(w, "Access denied", http.StatusForbidden)
 		return
 	}
-	info, err := os.Stat(full)
+	info, err := a.Config.StatPath(full)
 	if err != nil || info.IsDir() {
 		http.Error(w, "File not found", http.StatusNotFound)
 		return
@@ -1371,7 +1536,7 @@ func (a *App) handlePreview(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "No preview available", http.StatusBadRequest)
 		return
 	}
-	title, body, truncated, err := PreviewDocument(full)
+	title, body, truncated, err := a.Config.PreviewDocument(full)
 	if err != nil {
 		http.Error(w, "Preview failed", http.StatusInternalServerError)
 		return
@@ -1429,12 +1594,34 @@ func (a *App) handleFile(w http.ResponseWriter, r *http.Request) {
 	// extension merely lied about an otherwise native container. Without ffmpeg
 	// this step is skipped and the bytes are served exactly as before.
 	extension := strings.ToLower(filepath.Ext(full))
-	if extIn(extension, videoExtensions) || extIn(extension, audioExtensions) {
+	if !a.Config.IsRemotePath(full) && (extIn(extension, videoExtensions) || extIn(extension, audioExtensions)) {
 		if a.Transcoder != nil && a.Transcoder.ServeBrowser(w, r, full) {
 			return
 		}
 	}
-	serveCourseFile(w, r, full, GuessMime(full, "application/octet-stream"))
+	a.serveCourseFile(w, r, full, GuessMime(full, "application/octet-stream"))
+}
+
+// serveCourseFile is the Config-aware variant of the package-level helper: the
+// file is opened through Config and the metadata comes from the source backend,
+// so local and remote paths behave the same.
+func (a *App) serveCourseFile(w http.ResponseWriter, r *http.Request, full, mime string) {
+	handle, err := a.Config.OpenPath(full)
+	if err != nil {
+		http.Error(w, "File not found", http.StatusNotFound)
+		return
+	}
+	defer handle.Close()
+	info, err := a.Config.StatPath(full)
+	if err != nil || info.IsDir() {
+		http.Error(w, "File not found", http.StatusNotFound)
+		return
+	}
+	w.Header().Set("Content-Type", mime)
+	w.Header().Set("Content-Disposition", "inline; filename=\""+sanitiseHeaderFilename(filepath.Base(full))+"\"")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("Accept-Ranges", "bytes")
+	http.ServeContent(w, r, filepath.Base(full), info.ModTime(), handle)
 }
 
 // serveCourseFile streams a course file to the browser with the given MIME and
@@ -1538,6 +1725,12 @@ func (a *App) handleMediaStatus(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "this lesson has no media")
 		return
 	}
+	if a.Config.IsRemotePath(file) {
+		// The original bytes are streamed with full Range support. Conversion
+		// would require a local copy, so remote lessons always play directly.
+		writeJSON(w, http.StatusOK, mediaStatus{Mode: "raw", Ready: true})
+		return
+	}
 
 	status := mediaStatus{Mode: "raw", Ready: true}
 	if a.Transcoder != nil {
@@ -1608,6 +1801,10 @@ func (a *App) handleHLSPlaylist(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "this lesson has no media")
 		return
 	}
+	if a.Config.IsRemotePath(file) {
+		writeError(w, http.StatusNotImplemented, "remote source files are served directly")
+		return
+	}
 	if a.Transcoder == nil || !a.Transcoder.Available() {
 		writeError(w, http.StatusNotImplemented, "ffmpeg is not installed, so this file cannot be converted")
 		return
@@ -1653,6 +1850,10 @@ func (a *App) handleHLSSegment(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "this lesson has no media")
 		return
 	}
+	if a.Config.IsRemotePath(file) {
+		writeError(w, http.StatusNotImplemented, "remote source files are served directly")
+		return
+	}
 	position, err := strconv.Atoi(strings.TrimSpace(r.URL.Query().Get("i")))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "the segment number is missing")
@@ -1691,7 +1892,7 @@ func (a *App) handleSubtitle(w http.ResponseWriter, r *http.Request) {
 	raw := r.URL.Query().Get("raw") == "1"
 	var body string
 	if raw {
-		text, err := ReadSubtitleText(full)
+		text, err := a.Config.ReadSubtitleText(full)
 		if err != nil {
 			http.Error(w, "File not found", http.StatusNotFound)
 			return
@@ -1700,7 +1901,7 @@ func (a *App) handleSubtitle(w http.ResponseWriter, r *http.Request) {
 	} else {
 		// Browsers only understand WebVTT, so every supported format (SRT,
 		// VTT, SBV, ASS/SSA, both .sub flavours) is converted on the fly.
-		text, err := ReadSubtitleText(full)
+		text, err := a.Config.ReadSubtitleText(full)
 		if err != nil {
 			http.Error(w, "File not found", http.StatusNotFound)
 			return

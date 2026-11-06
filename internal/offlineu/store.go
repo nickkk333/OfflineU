@@ -94,7 +94,7 @@ func (s *CourseStore) RecentCourses() []RecentCourse {
 		if item.Path == "" {
 			continue
 		}
-		info, err := os.Stat(item.Path)
+		info, err := s.cfg.StatPath(item.Path)
 		if err != nil || !info.IsDir() {
 			continue
 		}
@@ -103,7 +103,7 @@ func (s *CourseStore) RecentCourses() []RecentCourse {
 		}
 		name := item.Name
 		if name == "" {
-			name = filepath.Base(item.Path)
+			name = s.cfg.CourseBaseName(item.Path)
 		}
 		result = append(result, RecentCourse{
 			Path:         item.Path,
@@ -178,7 +178,7 @@ func (s *CourseStore) Restore() *Course {
 	}
 
 	s.cfg.RefreshRoots()
-	info, err := os.Stat(remembered)
+	info, err := s.cfg.StatPath(remembered)
 	if err != nil || !info.IsDir() {
 		s.Clear()
 		return nil

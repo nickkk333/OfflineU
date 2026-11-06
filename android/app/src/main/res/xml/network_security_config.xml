@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  OfflineU is normally reached at http://<lan-ip>:5000, so cleartext HTTP must
+  be allowed. HTTPS works as well; a NAS with a private CA can be trusted by
+  installing that CA on the phone (the user trust store is included below).
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true">
+        <trust-anchors>
+            <certificates src="system" />
+            <certificates src="user" />
+        </trust-anchors>
+    </base-config>
+</network-security-config>

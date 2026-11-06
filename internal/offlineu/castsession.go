@@ -560,7 +560,7 @@ func (a *App) castNext(session *CastSession) error {
 	// decision below reads the same facts without probing the file twice.
 	file := a.mediaFileFor(course, next)
 	duration := 0.0
-	if file != "" {
+	if file != "" && !a.Config.IsRemotePath(file) {
 		ctx, cancel := watchdogProbeContext()
 		info, err := a.Transcoder.Probe(ctx, file)
 		cancel()

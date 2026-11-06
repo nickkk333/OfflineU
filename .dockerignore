@@ -30,3 +30,6 @@ courses/
 LICENSE
 README.md
 images/
+
+# ---- Android client (built with Gradle, not part of the image) ----
+android/
