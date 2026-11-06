@@ -45,7 +45,8 @@ endif
 #
 # manifest 的 version 必须是 x[.y[.z]][-build] 这种数字版本：`latest`（未打 tag）
 # 会被飞牛判成「应用包不符合系统要求」，所以这里留空，由 build-fpk.sh 换成 0.0.<日期>。
-# FNOS_PLATFORM 必须与 NAS 架构一致：x86（Intel/AMD）或 arm（RK3588 等）。
+# FNOS_PLATFORM 必须与 NAS 架构一致：x86（Intel/AMD 64 位 x86_64）或 arm（RK3588 等）。
+# fnOS 的 platform 只接受 x86/arm/all；x64/x86_64/amd64 会自动归一化成 x86。
 FNOS_VERSION   ?= $(if $(filter latest,$(VERSION)),,$(VERSION))
 FNOS_PLATFORM  ?= x86
 FNOS_IMAGE     ?= ghcr.io/nickkk333/offlineu

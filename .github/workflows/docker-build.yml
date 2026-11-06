@@ -167,10 +167,12 @@ jobs:
   # ---- 飞牛 fnOS 的 .fpk 外壳 ----
   # 包内只有 manifest / 生命周期脚本 / 安装向导 / compose，应用本体是 ghcr 上刚推送的
   # 那个 tag，所以目标机需要能拉取镜像（离线时先导入 image tar，或改 FNOS_IMAGE）。
-  #   v2.1.17 -> offlineu_2.1.17_x86.fpk   (artifact + GitHub release asset)
+  # platform=x86 是 fnOS 官方标识，指 64 位 x86_64（镜像为 linux/amd64），不是 32 位；
+  # 写 x64 会被系统拒绝安装，因此主包仍是 _x86.fpk，另复制一份 _x64.fpk 便于按 64 位名称取用。
+  #   v2.1.21 -> offlineu_2.1.21_x86.fpk + offlineu_2.1.21_x64.fpk
   # 要出 ARM 包时，把下面的平台改成矩阵：[x86, arm]
   fnos-fpk:
-    name: Build fnOS .fpk (x86)
+    name: Build fnOS .fpk (x86_64 / x64)
     if: startsWith(github.ref, 'refs/tags/')
     needs: [version]
     runs-on: ubuntu-latest
@@ -190,6 +192,9 @@ jobs:
         IMAGE="$(echo "$IMAGE" | tr '[:upper:]' '[:lower:]')"
         bash packaging/fnos-app/build-fpk.sh "$V" x86 "$IMAGE:$V"
         tar -xzOf "image-dist/offlineu_${V}_x86.fpk" manifest
+        # Same bytes, x64 name: fnOS only accepts platform=x86 in the manifest,
+        # but users often look for a 64-bit-named package.
+        cp "image-dist/offlineu_${V}_x86.fpk" "image-dist/offlineu_${V}_x64.fpk"
 
     - name: Upload fpk artifact
       uses: actions/upload-artifact@v4
@@ -329,8 +334,12 @@ jobs:
             offlineu:${{ steps.ver.outputs.version }}
           ```
 
-          ### 飞牛 fnOS 应用包（.fpk）
+          ### 飞牛 fnOS 应用包（.fpk，64 位 x86_64）
           `offlineu_${{ steps.ver.outputs.version }}_x86.fpk` —— 在「应用中心 → 手动安装」里直接装。
+          `platform = x86` 是飞牛官方的架构标识（V1.1.8+ 仅支持 `x86` / `arm` / `all`），
+          对应 64 位 `x86_64` 机器，包内镜像为 `linux/amd64`；写成 `x64` 会被判为不符合系统要求。
+          另附完全相同的 `offlineu_${{ steps.ver.outputs.version }}_x64.fpk` 副本，
+          按 64 位名称取用即可；**安装时建议用 `_x86.fpk`**，其文件名与 manifest 一致。
           安装向导只问课程目录（只读挂载到 `/courses`），进度与转码缓存落在安装卷的
           `@appshare/offlineu`；装好后到「应用设置 → 授权目录」把该目录授权给本应用。
           容器使用 host 网络，直接占用宿主机 5000 端口（投屏依赖组播）。
@@ -346,7 +355,8 @@ jobs:
           | 文件 | 说明 |
           | --- | --- |
           | `offlineu-amd64-${{ steps.ver.outputs.version }}.tar` | Docker 镜像文件（linux/amd64，`docker load -i` 用） |
-          | `offlineu_${{ steps.ver.outputs.version }}_x86.fpk` | 飞牛 fnOS 安装包（x86，手动安装） |
+          | `offlineu_${{ steps.ver.outputs.version }}_x86.fpk` | 飞牛 fnOS 安装包（x86 = 64 位 x86_64，手动安装用这个） |
+          | `offlineu_${{ steps.ver.outputs.version }}_x64.fpk` | 同一个 64 位安装包的 x64 命名副本（内容完全一致） |
           | `offlineu-android-${{ steps.ver.outputs.version }}.apk` | Android 客户端（debug 签名，可直接侧载） |
           | `checksums.txt` | SHA-256 校验和 |
 
