@@ -142,7 +142,7 @@
 
                     <EditText
                         android:id="@+id/source_url"
-                        style="@style/Widget.OfflineU.Input"
+                        style="@style/OfflineUInput"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
                         android:layout_marginTop="12dp"
@@ -151,7 +151,7 @@
 
                     <EditText
                         android:id="@+id/source_webdav_user"
-                        style="@style/Widget.OfflineU.Input"
+                        style="@style/OfflineUInput"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
                         android:layout_marginTop="8dp"
@@ -160,7 +160,7 @@
 
                     <EditText
                         android:id="@+id/source_webdav_password"
-                        style="@style/Widget.OfflineU.Input"
+                        style="@style/OfflineUInput"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
                         android:layout_marginTop="8dp"
@@ -177,7 +177,7 @@
 
                     <EditText
                         android:id="@+id/source_host"
-                        style="@style/Widget.OfflineU.Input"
+                        style="@style/OfflineUInput"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
                         android:layout_marginTop="12dp"
@@ -186,7 +186,7 @@
 
                     <EditText
                         android:id="@+id/source_share"
-                        style="@style/Widget.OfflineU.Input"
+                        style="@style/OfflineUInput"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
                         android:layout_marginTop="8dp"
@@ -195,7 +195,7 @@
 
                     <EditText
                         android:id="@+id/source_base_path"
-                        style="@style/Widget.OfflineU.Input"
+                        style="@style/OfflineUInput"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
                         android:layout_marginTop="8dp"
@@ -204,7 +204,7 @@
 
                     <EditText
                         android:id="@+id/source_smb_user"
-                        style="@style/Widget.OfflineU.Input"
+                        style="@style/OfflineUInput"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
                         android:layout_marginTop="8dp"
@@ -213,7 +213,7 @@
 
                     <EditText
                         android:id="@+id/source_smb_password"
-                        style="@style/Widget.OfflineU.Input"
+                        style="@style/OfflineUInput"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
                         android:layout_marginTop="8dp"
@@ -230,7 +230,7 @@
 
                     <EditText
                         android:id="@+id/source_path"
-                        style="@style/Widget.OfflineU.Input"
+                        style="@style/OfflineUInput"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
                         android:layout_marginTop="12dp"

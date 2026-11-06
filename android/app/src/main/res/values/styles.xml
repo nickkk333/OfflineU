@@ -25,7 +25,9 @@
         <item name="android:minHeight">52dp</item>
     </style>
 
-    <style name="Widget.OfflineU.Input">
+    <!-- No dot in the name: AAPT treats "Foo.Bar" without a parent as an
+         implicit child of "Foo", which must exist (and caused a link error). -->
+    <style name="OfflineUInput">
         <item name="android:background">@drawable/bg_input</item>
         <item name="android:padding">14dp</item>
         <item name="android:textColor">@color/text</item>
