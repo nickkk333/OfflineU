@@ -217,13 +217,33 @@ jobs:
         java-version: '17'
         cache: gradle
 
-    - name: Set up Android SDK
-      uses: android-actions/setup-android@v3
-
-    - name: Install Android SDK 34
+    # ubuntu-latest already ships an Android SDK. setup-android@v3 tries to
+    # install the retired "tools" package and fails on newer cmdline-tools
+    # ("Failed to find package 'tools'"), so wire up the preinstalled SDK and
+    # install only the two components AGP 8.5.2 needs.
+    - name: Use preinstalled Android SDK
       run: |
-        yes | sdkmanager --licenses > /dev/null || true
-        sdkmanager --install "platforms;android-34" "build-tools;34.0.0"
+        set -e
+        SDK_ROOT="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
+        SDKMANAGER="$(find "$SDK_ROOT/cmdline-tools" -type f -name sdkmanager -print -quit)"
+        if [ -z "$SDKMANAGER" ]; then
+          echo "::error::sdkmanager not found under $SDK_ROOT/cmdline-tools"
+          exit 1
+        fi
+        echo "ANDROID_HOME=$SDK_ROOT" >> "$GITHUB_ENV"
+        echo "ANDROID_SDK_ROOT=$SDK_ROOT" >> "$GITHUB_ENV"
+        echo "SDKMANAGER=$SDKMANAGER" >> "$GITHUB_ENV"
+        echo "$(dirname "$SDKMANAGER")" >> "$GITHUB_PATH"
+        echo "$SDK_ROOT/platform-tools" >> "$GITHUB_PATH"
+        "$SDKMANAGER" --version
+
+    - name: Accept licenses and install Android SDK 34
+      run: |
+        set -e
+        yes | "$SDKMANAGER" --licenses > /dev/null || true
+        "$SDKMANAGER" --install "platforms;android-34" "build-tools;34.0.0"
+        test -d "$ANDROID_HOME/platforms/android-34"
+        test -d "$ANDROID_HOME/build-tools/34.0.0"
 
     - name: Assemble debug APK
       working-directory: android

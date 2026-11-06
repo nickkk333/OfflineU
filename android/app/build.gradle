@@ -4,12 +4,8 @@ plugins {
 
 // CI passes -PappVersionName / -PappVersionCode for tagged builds so the APK
 // carries the release version. Local builds keep the defaults below.
-def appVersionName = project.hasProperty('appVersionName')
-        ? project.property('appVersionName').toString()
-        : '1.0.0'
-def appVersionCode = project.hasProperty('appVersionCode')
-        ? project.property('appVersionCode').toString().toInteger()
-        : 1
+def appVersionName = project.hasProperty('appVersionName') ? project.property('appVersionName').toString() : '1.0.0'
+def appVersionCode = project.hasProperty('appVersionCode') ? project.property('appVersionCode').toString().toInteger() : 1
 
 android {
     namespace 'com.nickkk333.offlineu'
