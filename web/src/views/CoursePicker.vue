@@ -1,6 +1,5 @@
 <script setup>
 import { computed, nextTick, ref, watch } from 'vue'
-import { RouterLink } from 'vue-router'
 import DirectoryBrowser from '../components/DirectoryBrowser.vue'
 import SourceManager from '../components/SourceManager.vue'
 import { forgetCourse, loadCourse, refreshState, store } from '../store.js'
@@ -211,14 +210,6 @@ function rootStateLabel(status) {
           </button>
         </div>
       </div>
-    </section>
-
-    <section v-if="!store.sources.length" class="card picker__connect">
-      <div class="section-title">{{ t('login.promptTitle') }}</div>
-      <p class="card__hint">{{ t('login.promptText') }}</p>
-      <RouterLink to="/login" class="btn btn--sm picker__connect-btn">
-        {{ t('login.promptButton') }}
-      </RouterLink>
     </section>
 
     <SourceManager />
@@ -553,20 +544,9 @@ function rootStateLabel(status) {
   transform: translateY(10px) scale(0.97);
 }
 
-.picker__connect-btn {
-  display: inline-block;
-  margin-top: 14px;
-  text-decoration: none;
-}
-
 @media (max-width: 640px) {
   .picker {
     gap: 16px;
-  }
-
-  .picker__connect-btn {
-    width: 100%;
-    text-align: center;
   }
 
   .recent__row {

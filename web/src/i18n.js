@@ -193,10 +193,7 @@ const en = {
     note: 'After connecting, pick the course folder in the browser. When OFFLINEU_ROOTS is set, local folders must be inside that allow-list.',
     existingTitle: '🔗 Already configured',
     existingHint: 'These sources live on the server and can be reopened without typing the password again.',
-    skip: 'Skip — use a mapped folder',
-    promptTitle: '🔑 Connect a course source',
-    promptText: 'Courses can live on a WebDAV server, an SMB share or another folder on this machine. Add one at the connection page — no restart needed.',
-    promptButton: 'Open the connection page'
+    skip: 'Skip — use a mapped folder'
   },
   dash: {
     changeCourse: '⇄ Select different course',
@@ -501,10 +498,7 @@ const zh = {
     note: '连接后在目录浏览器里选择课程文件夹。设置了 OFFLINEU_ROOTS 白名单时，本地目录必须位于白名单内。',
     existingTitle: '🔗 已配置的来源',
     existingHint: '这些来源保存在服务器上，重新打开无需再次输入密码。',
-    skip: '跳过 —— 使用已挂载的文件夹',
-    promptTitle: '🔑 连接课程来源',
-    promptText: '课程可以放在 WebDAV 服务器、SMB 共享或本机其他文件夹里。在连接页添加即可，无需重启 OfflineU。',
-    promptButton: '打开连接页'
+    skip: '跳过 —— 使用已挂载的文件夹'
   },
   dash: {
     changeCourse: '⇄ 更换课程',
